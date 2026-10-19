@@ -1,0 +1,139 @@
+================================================================================
+THIRD-PARTY LICENSES
+AIHC Plugins
+================================================================================
+
+This file lists third-party software components distributed with or depended
+upon by AIHC Plugins, together with their respective licenses.
+
+Maintainers: this file MUST be kept in sync with the actual dependency tree.
+Add an entry for every new direct or transitive dependency that is distributed
+with this product.
+
+--------------------------------------------------------------------------------
+LICENSE COMPATIBILITY POLICY
+--------------------------------------------------------------------------------
+
+ALLOWED (permissive, compatible with Apache-2.0 distribution):
+
+    Apache-2.0, MIT, MIT-CMU, HPND, BSD-2-Clause, BSD-3-Clause, ISC,
+    Python-2.0, Unlicense, CC0-1.0, Zlib
+
+REQUIRES REVIEW (weak copyleft; permitted only when dynamically linked and
+                 kept as an unmodified, separately distributed component):
+
+    LGPL-2.1, LGPL-3.0, MPL-2.0, EPL-2.0, CDDL-1.0
+
+PROHIBITED (strong copyleft or non-OSI terms; MUST NOT be introduced):
+
+    GPL-2.0, GPL-3.0, AGPL-3.0, SSPL, BUSL-1.1, CC-BY-NC-*, CC-BY-SA-*,
+    any "source-available but not open source" license,
+    any license with a field-of-use or non-commercial restriction
+
+Rationale: a strong-copyleft dependency propagates its obligations to the
+entire distributed work, which would invalidate the Apache-2.0 terms declared
+in the LICENSE file and is incompatible with customer deployment alongside
+proprietary data-processing code.
+
+--------------------------------------------------------------------------------
+HOW TO VERIFY
+--------------------------------------------------------------------------------
+
+Python components:
+
+    pip install pip-licenses
+    pip-licenses --format=markdown --with-urls --with-license-file
+
+Node.js components:
+
+    npx license-checker --summary
+    npx license-checker --production --json > licenses.json
+
+Go components:
+
+    go install github.com/google/go-licenses@latest
+    go-licenses report ./...
+
+Run the applicable command before every release and reconcile the output with
+the entries below. Any dependency appearing in the PROHIBITED list above must
+be removed or replaced before publishing.
+
+--------------------------------------------------------------------------------
+COMPONENT ENTRIES
+--------------------------------------------------------------------------------
+
+Template -- copy this block for each component:
+
+  Component:  <package name>
+  Version:    <version or version range>
+  Homepage:   <upstream project URL>
+  License:    <SPDX identifier, e.g. MIT>
+  License URL:<direct link to the upstream license text>
+  Usage:      <how this product uses the component>
+  Modified:   <yes | no>  (if yes, describe the modification)
+
+--------------------------------------------------------------------------------
+
+No third-party components are distributed with this product. The components
+below are runtime dependencies installed by the user, or quoted excerpts.
+
+  Component:  numpy
+  Version:    any (user-installed)
+  Homepage:   https://numpy.org
+  License:    BSD-3-Clause
+  License URL:https://github.com/numpy/numpy/blob/main/LICENSE.txt
+  Usage:      Runtime dependency of aihc-eval ms_selfcheck.py; installed by the
+              user, not distributed with this product.
+  Modified:   no
+
+  Component:  msgpack
+  Version:    any (user-installed)
+  Homepage:   https://github.com/msgpack/msgpack-python
+  License:    Apache-2.0
+  License URL:https://github.com/msgpack/msgpack-python/blob/main/COPYING
+  Usage:      Runtime dependency of aihc-eval ms_selfcheck.py; installed by the
+              user, not distributed with this product.
+  Modified:   no
+
+  Component:  websockets
+  Version:    any (user-installed)
+  Homepage:   https://github.com/python-websockets/websockets
+  License:    BSD-3-Clause
+  License URL:https://github.com/python-websockets/websockets/blob/main/LICENSE
+  Usage:      Runtime dependency of aihc-eval ms_selfcheck.py; installed by the
+              user, not distributed with this product.
+  Modified:   no
+
+  Component:  Pillow
+  Version:    any (user-installed, optional)
+  Homepage:   https://python-pillow.org
+  License:    MIT-CMU
+  License URL:https://github.com/python-pillow/Pillow/blob/main/LICENSE
+  Usage:      Optional runtime dependency of aihc-eval ms_selfcheck.py (png/jpeg
+              test cases only); installed by the user, not distributed.
+  Modified:   no
+
+  Component:  Ray
+  Version:    2.49.2 (user-installed)
+  Homepage:   https://github.com/ray-project/ray
+  License:    Apache-2.0
+  License URL:https://github.com/ray-project/ray/blob/master/LICENSE
+  Usage:      Installed on the user's dev machine by the aihc-eval skill;
+              ray_env_check.sh only imports it to verify the version.
+              Not distributed with this product.
+  Modified:   no
+
+  Component:  vla-evaluation-harness
+  Version:    v0.5.0
+  Homepage:   https://github.com/allenai/vla-evaluation-harness
+  License:    Apache-2.0
+  License URL:https://github.com/allenai/vla-evaluation-harness/blob/main/LICENSE
+  Usage:      Referenced by aihc-eval documentation; probe_form_defaults.sh reads
+              the installed version. references/评测集观测口径.md quotes an 8-line
+              excerpt of src/vla_eval/orchestrator.py with source attribution.
+  Modified:   yes (excerpt only, Chinese comments added)
+
+================================================================================
+When a component is added, its full license text MUST be reproduced in the
+licenses/ directory where required by the respective license terms.
+================================================================================

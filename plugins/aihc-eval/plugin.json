@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "aihc-eval",
+  "version": "0.2.1",
+  "description": "百舸模型评测工具集：把自定义推理服务改造成具身评测可用的 Model Server（用户自定义镜像接入）等评测场景能力。",
+  "author": {
+    "name": "Baidu AI Cloud AIHC",
+    "url": "https://cloud.baidu.com/product/aihc.html"
+  },
+  "homepage": "https://github.com/baidubce/aihc-plugins",
+  "repository": "https://github.com/baidubce/aihc-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "aihc",
+    "evaluation",
+    "embodied-ai",
+    "model-server"
+  ]
+}

@@ -1,0 +1,17 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node.js
+node_modules/
+
+# Local secrets
+.env
+.env.*

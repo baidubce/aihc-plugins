@@ -1,0 +1,17 @@
+{
+  "name": "aihc-plugins",
+  "owner": {
+    "name": "Baidu AI Cloud AIHC",
+    "url": "https://cloud.baidu.com/product/aihc.html"
+  },
+  "metadata": {
+    "description": "百度智能云百舸（AIHC）AI 编程助手插件。"
+  },
+  "plugins": [
+    {
+      "name": "aihc-eval",
+      "source": "./plugins/aihc-eval",
+      "description": "百舸模型评测工具集：把自定义推理服务改造成具身评测可用的 Model Server（用户自定义镜像接入）等评测场景能力。"
+    }
+  ]
+}
