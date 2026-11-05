@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "aihc-eval-openapi",
+  "version": "0.1.2",
+  "description": "百舸具身评测 OpenAPI 实践：以苏州地域为例，给出评测任务的调用顺序、签名与幂等、CreateEmbodiedEval 请求体（预置模型、自有权重、自有镜像、全托管资源池）、结果与回放视频读取和常见报错排查。",
+  "author": {
+    "name": "Baidu AI Cloud AIHC",
+    "url": "https://cloud.baidu.com/product/aihc.html"
+  },
+  "homepage": "https://github.com/baidubce/aihc-plugins",
+  "repository": "https://github.com/baidubce/aihc-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "aihc",
+    "embodied-eval",
+    "openapi",
+    "libero",
+    "robotwin"
+  ]
+}

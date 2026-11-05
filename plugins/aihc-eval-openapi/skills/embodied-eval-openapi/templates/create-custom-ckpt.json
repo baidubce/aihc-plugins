@@ -1,0 +1,36 @@
+{
+  "name": "my-openvla-ft-libero-spatial",
+  "resourcePoolId": "<资源池ID>",
+  "queueId": "<队列ID>",
+  "priority": "normal",
+  "dataSources": [
+    {"type": "bos", "sourcePath": "<bucket>/<权重所在前缀>", "mountPath": "/mnt/ckpt", "options": {"readOnly": true}}
+  ],
+  "modelConfig": {
+    "modelType": "customCKPT",
+    "modelName": "openvla_7b",
+    "ckptPath": "/mnt/ckpt/<权重目录>",
+    "replicas": 1,
+    "maxBatchSize": 1,
+    "resources": [
+      {"name": "baidu.com/rtx_4090_cgpu", "quantity": 1},
+      {"name": "cpu", "quantity": 8},
+      {"name": "memory", "quantity": 32}
+    ]
+  },
+  "benchmarkConfigs": [
+    {
+      "name": "libero",
+      "subBench": "libero_spatial",
+      "resources": [
+        {"name": "baidu.com/rtx_4090_cgpu", "quantity": 1},
+        {"name": "cpu", "quantity": 8},
+        {"name": "memory", "quantity": 32}
+      ],
+      "parallelShards": 1,
+      "episodesPerTask": 10,
+      "recordVideo": false,
+      "modelOverride": {"chunkSize": 1, "extraArgs": {"unnorm_key": "libero_spatial"}}
+    }
+  ]
+}

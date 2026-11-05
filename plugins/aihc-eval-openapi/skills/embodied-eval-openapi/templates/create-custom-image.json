@@ -1,0 +1,40 @@
+{
+  "name": "my-model-server-libero-spatial",
+  "resourcePoolId": "<资源池ID>",
+  "queueId": "<队列ID>",
+  "priority": "normal",
+  "dataSources": [
+    {"type": "bos", "sourcePath": "<bucket>/<权重所在前缀>", "mountPath": "/mnt/ckpt", "options": {"readOnly": true}}
+  ],
+  "modelConfig": {
+    "modelType": "customImage",
+    "replicas": 1,
+    "maxBatchSize": 1,
+    "resources": [
+      {"name": "baidu.com/rtx_4090_cgpu", "quantity": 1},
+      {"name": "cpu", "quantity": 8},
+      {"name": "memory", "quantity": 32}
+    ],
+    "customImage": {
+      "image": "ccr-registry.baidubce.com/<命名空间>/<镜像名>:<tag>",
+      "command": "python3 /app/serve.py --ckpt /mnt/ckpt/<权重目录>",
+      "envs": [{"name": "LOG_LEVEL", "value": "info"}],
+      "imageConfig": {"username": "<镜像仓库用户名>", "password": "<镜像仓库密码>"}
+    }
+  },
+  "benchmarkConfigs": [
+    {
+      "name": "libero",
+      "subBench": "libero_spatial",
+      "resources": [
+        {"name": "baidu.com/rtx_4090_cgpu", "quantity": 1},
+        {"name": "cpu", "quantity": 8},
+        {"name": "memory", "quantity": 32}
+      ],
+      "parallelShards": 1,
+      "episodesPerTask": 10,
+      "recordVideo": false,
+      "modelOverride": {"chunkSize": 1}
+    }
+  ]
+}
