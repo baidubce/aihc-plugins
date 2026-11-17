@@ -29,6 +29,15 @@ ACTION 1-D 与有限值、图像四种编码、ERROR 不断连、无 episode 上
     python ms_selfcheck.py --url ws://127.0.0.1:18000 --obs-spec obs.robodojo.json --steps 3
     python ms_selfcheck.py --list
     python ms_selfcheck.py --url ws://127.0.0.1:18000 --skip image_formats,session_isolation
+    # 自建推理服务带 Bearer 鉴权：Token 只从环境变量读，绝不走命令行（会进 shell 历史与 ps）
+    VLA_EVAL_SERVER_TOKEN=<token> python ms_selfcheck.py --url ws://127.0.0.1:18000 \\
+        --obs-spec obs.robodojo.json --require-auth
+
+鉴权（`token_format` / `auth` 用例）与平台自建推理服务（selfHosted）同口径：设了
+`--token-env` 指向的环境变量（默认 `VLA_EVAL_SERVER_TOKEN`，即 harness 客户端读 Token 的
+变量）时，所有 HTTP 探活与 WS 握手都带 `Authorization: Bearer <token>`，并额外断言
+「不带 / 带错 Token 的握手被 401/403 拒绝」。没设 Token 时这两个用例跳过；
+`--require-auth` 把「没设 Token」本身判为 FAIL。输出里 Token 一律掩码为 `Bearer ***`。
 
 `--obs-spec` 是交付门禁的一部分：**不给它 `obs_spec` 用例直接 FAIL**。相机键名必须
 逐字等于目标 benchmark 实发的键名（不是模型内部的 image_prompt 名），否则自检会按
@@ -50,8 +59,8 @@ ACTION 1-D 与有限值、图像四种编码、ERROR 不断连、无 episode 上
 
 `states` 只是**维度声明**，不是线缆字段名；字段名由 `state_key` 给出，**按 benchmark 三分**：
 `state`（robodojo；robocasa365 发的是嵌套 dict，本自检的向量口径不适用）、
-`states`（libero / libero_pro / calvin / behavior1k / simpler；robocasa 在 harness v0.5.0
-根本不发 state，v0.8.0 起才发 9D）、`joint_state`（robotwin）。不写 `state_key` 按 `state` 处理。
+`states`（libero / libero_pro / calvin / behavior1k / simpler；robocasa 9D 与 robotwin 16D 末端位姿
+都要 `send_state=True` 才发）、`joint_state`（robotwin 14D，恒发）。不写 `state_key` 按 `state` 处理。
 对照表见 `references/评测集观测口径.md` §4；**不要改 MS 去迁就自检**。
 
 Authors: Baidu AI Cloud AIHC
@@ -60,6 +69,8 @@ import argparse
 import asyncio
 import io
 import json
+import os
+import re
 import sys
 import time
 import typing
@@ -84,6 +95,50 @@ MSG_ACTION = "action"
 MSG_EPISODE_START = "episode_start"
 MSG_EPISODE_END = "episode_end"
 MSG_ERROR = "error"
+
+# ── 鉴权口径（与平台自建推理服务的创建期校验、harness 客户端同口径）
+DEFAULT_TOKEN_ENV = "VLA_EVAL_SERVER_TOKEN"
+TOKEN_MIN_BYTES = 16
+TOKEN_MAX_BYTES = 4096
+# RFC 6750 §2.1 b64token；同时拦住空白、控制字符与换行（防 header 注入）。
+# 用 \Z 不用 $：Python 的 $ 会放过末尾一个 \n，而控制面 Go 正则的 $ 是严格串尾
+TOKEN_RE = re.compile(r"^[A-Za-z0-9\-._~+/]+=*\Z")
+# 带 Token 时 url query 不得再携带的凭据键（小写比对）
+CREDENTIAL_QUERY_KEYS = frozenset(("token", "access_token", "auth", "key"))
+# 平台探活把 401/403 判为 inference_auth_rejected 并立即停止重试，其余非 101 判为未就绪或被拒
+AUTH_REJECT_STATUSES = (401, 403)
+BEARER_RE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9\-._~+/]+=*")
+# websockets 14 起 connect() 的自定义头参数改名；harness 客户端按同一规则选参
+_HEADERS_KWARG = ("additional_headers" if int(websockets.__version__.split(".")[0]) >= 14
+                  else "extra_headers")
+
+
+def auth_headers(token: str) -> dict:
+    """生成鉴权头；无 Token 返回空 dict。
+
+    Args:
+        token: Bearer Token 原文，空串表示不鉴权。
+
+    Returns:
+        dict: `{"Authorization": "Bearer <token>"}` 或 `{}`。
+    """
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def redact(text: str, secrets: typing.Iterable = ()) -> str:
+    """掩码输出里的 Token：`Bearer <token>` → `Bearer ***`，Token 原文出现处 → `***`。
+
+    Args:
+        text: 待打印的文本。
+        secrets: 需要整串替换的敏感值，空串忽略。
+
+    Returns:
+        str: 掩码后的文本。
+    """
+    for s in secrets:
+        if s:
+            text = text.replace(s, "***")
+    return BEARER_RE.sub(r"\1***", text)
 
 # 仅用于 `--skip obs_spec` 的快速试跑。**它的键名是假的**：不给 `--obs-spec` 时
 # `obs_spec` 用例会 FAIL，因为按假键名自检只能自洽通过，上平台每个 episode 都 ERROR。
@@ -231,9 +286,14 @@ def unpack_message(data: bytes) -> dict:
 class Report(object):
     """逐条记账，末尾汇总。"""
 
-    def __init__(self) -> None:
-        """初始化。"""
+    def __init__(self, secrets: typing.Iterable = ()) -> None:
+        """初始化。
+
+        Args:
+            secrets: 打印前要掩码的敏感值（Bearer Token 原文），空串忽略。
+        """
         self.items = []
+        self.secrets = tuple(s for s in secrets if s)
 
     def add(self, name: str, ok: bool, detail: str = "") -> bool:
         """记一条结论并立刻打印。
@@ -241,11 +301,12 @@ class Report(object):
         Args:
             name: 断言名，如 `hello.seq_echo`，失败时出现在汇总的失败项里。
             ok: 断言是否通过。
-            detail: 附加说明，非空时接在结论后打印。
+            detail: 附加说明，非空时接在结论后打印；打印前掩码 Token。
 
         Returns:
             传入的 `ok`，便于 `if not report.add(...): return`。
         """
+        detail = redact(detail, self.secrets)
         self.items.append((name, ok, detail))
         print(f"[{'PASS' if ok else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""),
               flush=True)
@@ -255,9 +316,9 @@ class Report(object):
         """只打印不计入成败的观察项。
 
         Args:
-            text: 要以 `[INFO]` 前缀打印的观察内容。
+            text: 要以 `[INFO]` 前缀打印的观察内容；打印前掩码 Token。
         """
-        print(f"[INFO] {text}", flush=True)
+        print(f"[INFO] {redact(text, self.secrets)}", flush=True)
 
     def failed(self) -> list:
         """返回失败项名字列表。"""
@@ -276,18 +337,21 @@ class MsClient(object):
     """最小 WebSocket 客户端：手写信封、自管 seq。
 
     连接参数与 harness `Connection` 一致：`compression=None`、`max_size=None`、
-    **`ping_interval=None`**（长推理会被库默认心跳误杀）。
+    **`ping_interval=None`**（长推理会被库默认心跳误杀）；带 Token 时每次握手都发
+    `Authorization: Bearer <token>`（harness 客户端重连也会重发）。
     """
 
-    def __init__(self, url: str, timeout: float = 60.0) -> None:
+    def __init__(self, url: str, timeout: float = 60.0, token: str = "") -> None:
         """初始化。
 
         Args:
             url: `ws://host:port`。
             timeout: 单次 recv 的超时秒数。
+            token: Bearer Token，空串表示握手不带鉴权头。
         """
         self.url = url
         self.timeout = timeout
+        self.token = token
         self.ws = None
         self.server_info = {}
         self._seq = 0
@@ -298,8 +362,9 @@ class MsClient(object):
         Returns:
             MsClient: 已建立 WebSocket 连接的自身实例。
         """
+        kwargs = {_HEADERS_KWARG: auth_headers(self.token)} if self.token else {}
         self.ws = await websockets.connect(
-            self.url, compression=None, max_size=None, ping_interval=None)
+            self.url, compression=None, max_size=None, ping_interval=None, **kwargs)
         return self
 
     async def __aexit__(self, *exc_info: typing.Any) -> None:
@@ -504,19 +569,21 @@ def spec_dim(server_info: dict) -> int:
     return 0
 
 
-def http_get(url: str, timeout: float = 10.0) -> tuple:
+def http_get(url: str, timeout: float = 10.0, token: str = "") -> tuple:
     """不经代理地 GET 一次（自检环境里代理指向死端口）。
 
     Args:
         url: 完整 HTTP 地址，如 `http://127.0.0.1:18000/config`。
         timeout: 请求超时秒数。
+        token: Bearer Token，非空时带 `Authorization` 头（平台探活每一步都带）。
 
     Returns:
         `(status, body_bytes)`；连不上则 `(0, 错误信息 bytes)`。
     """
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(url, headers=auth_headers(token))
     try:
-        with opener.open(url, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             return getattr(resp, "status", resp.getcode()), resp.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
@@ -575,12 +642,12 @@ async def check_config(args: argparse.Namespace, report: Report) -> None:
         args: `parse_args()` 的结果，用到 `http`（HTTP 基址）与 `http_timeout`。
         report: 记账对象；`/config` 非 200 时记 FAIL 并跳过白名单参数用例。
     """
-    status, body = http_get(f"{args.http}/config", args.http_timeout)
+    status, body = http_get(f"{args.http}/config", args.http_timeout, args.token)
     if not report.add("config.status_200", status == 200,
                       f"{args.http}/config → {status or '连接失败'} {body[:200].decode(errors='replace')}"):
         return
     report.note(f"/config body: {body[:300].decode(errors='replace')}")
-    status, body = http_get(f"{args.http}/config?max_batch_size=1", args.http_timeout)
+    status, body = http_get(f"{args.http}/config?max_batch_size=1", args.http_timeout, args.token)
     report.add("config.query_whitelist", status == 200,
                f"?max_batch_size=1 → {status}（白名单参数应仍返 200）")
 
@@ -595,7 +662,7 @@ async def check_hello(args: argparse.Namespace, report: Report) -> dict:
     Returns:
         服务端 HELLO 的 payload（后续用例用它取 `action_spec`）；握手异常时返回空 dict。
     """
-    async with MsClient(args.url, args.timeout) as cli:
+    async with MsClient(args.url, args.timeout, args.token) as cli:
         try:
             msg = await cli.hello()
         except Exception as exc:
@@ -638,7 +705,7 @@ async def check_inference(args: argparse.Namespace, report: Report, info: dict) 
     rng = np.random.default_rng(0)
     budget = args.first_frame_budget
     firsts = {}
-    async with MsClient(args.url, args.timeout) as cli:
+    async with MsClient(args.url, args.timeout, args.token) as cli:
         await cli.hello()
         for ep in range(2):
             await start_episode(cli, f"selfcheck-ep{ep}")
@@ -698,7 +765,7 @@ async def check_image_formats(args: argparse.Namespace, report: Report, info: di
         except Exception as exc:
             report.add(f"image.{fmt}", False, f"客户端编码失败: {exc}")
             continue
-        async with MsClient(args.url, args.timeout) as cli:
+        async with MsClient(args.url, args.timeout, args.token) as cli:
             await cli.hello()
             await start_episode(cli, f"selfcheck-img-{fmt}")
             try:
@@ -729,7 +796,7 @@ async def check_error_resilience(args: argparse.Namespace, report: Report, info:
     if states:
         bad[args.obs_spec.get("state_key") or "state"] = rng.standard_normal(
             int(states)).astype(np.float32)
-    async with MsClient(args.url, args.timeout) as cli:
+    async with MsClient(args.url, args.timeout, args.token) as cli:
         await cli.hello()
         await start_episode(cli, "selfcheck-error")
         try:
@@ -762,7 +829,7 @@ async def check_no_episode_context(args: argparse.Namespace, report: Report, inf
         info: `check_hello()` 返回的 HELLO payload；本用例不用，仅为与其他用例同签名。
     """
     rng = np.random.default_rng(3)
-    async with MsClient(args.url, args.timeout) as cli:
+    async with MsClient(args.url, args.timeout, args.token) as cli:
         await cli.hello()
         try:
             msg, _ = await act(cli, build_obs(args.obs_spec, args.image_format, rng))
@@ -799,7 +866,7 @@ async def check_session_isolation(args: argparse.Namespace, report: Report, info
             Exception: 建连或收发失败时原样抛出，由 `asyncio.gather(return_exceptions=True)` 收集。
         """
         rng = np.random.default_rng(10 + idx)
-        async with MsClient(args.url, args.timeout) as cli:
+        async with MsClient(args.url, args.timeout, args.token) as cli:
             await cli.hello()
             await start_episode(cli, f"selfcheck-sess{idx}", sid=f"selfcheck-sid-{idx}")
             msg, _ = await act(cli, build_obs(args.obs_spec, args.image_format, rng))
@@ -815,9 +882,122 @@ async def check_session_isolation(args: argparse.Namespace, report: Report, info
         assert_action(res, report, f"session{idx}", dim)
 
 
+async def check_token_format(args: argparse.Namespace, report: Report) -> None:
+    """Token 与地址格式：按平台创建自建推理服务时的校验规则逐条核对，不过的平台直接 400。
+
+    Args:
+        args: `parse_args()` 的结果，用到 `token`、`token_env`、`require_auth` 与 `url`。
+        report: 记账对象；未设 Token 时按 `require_auth` 决定 FAIL 或跳过。
+    """
+    if not args.token:
+        if args.require_auth:
+            report.add("token.provided", False, f"--require-auth 要求设置环境变量 {args.token_env}")
+        else:
+            report.note(f"未设置 {args.token_env}，跳过鉴权用例（MS 不鉴权时正常）")
+        return
+    token = args.token
+    report.add("token.no_bearer_prefix", not token.lower().startswith("bearer "),
+               "Token 只填原文，不带 `Bearer ` 前缀（客户端自己拼）")
+    size = len(token.encode())
+    report.add("token.length", TOKEN_MIN_BYTES <= size <= TOKEN_MAX_BYTES,
+               f"{size} 字节，须在 [{TOKEN_MIN_BYTES}, {TOKEN_MAX_BYTES}]")
+    report.add("token.charset", bool(TOKEN_RE.match(token)),
+               "字符集限 RFC 6750 b64token `[A-Za-z0-9-._~+/]+=*`，首尾空白与换行也算违规")
+    parts = urllib.parse.urlsplit(args.url)
+    report.add("url.scheme", parts.scheme.lower() in ("ws", "wss"), f"scheme={parts.scheme!r}，须为 ws / wss")
+    report.add("url.no_userinfo_fragment", "@" not in parts.netloc and "#" not in args.url,
+               "地址不得带 userinfo 或 fragment")
+    keys = sorted({k for k, _ in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+                   if k.lower() in CREDENTIAL_QUERY_KEYS})
+    report.add("url.no_query_credentials", not keys,
+               "带 Token 时 query 不得再带 token / access_token / auth / key" + (f"，命中 {keys}" if keys else ""))
+
+
+async def ws_handshake_status(url: str, token: str, timeout: float) -> int:
+    """发一次 WS 握手后立即关闭，返回握手的 HTTP 状态码（101 表示握手成功）。
+
+    与平台探活同口径：只握手不发 HELLO。
+
+    Args:
+        url: MS 的 WebSocket 地址（含 path 与 query）。
+        token: Bearer Token，空串表示不带鉴权头。
+        timeout: 握手超时秒数。
+
+    Returns:
+        int: 101，或服务端拒绝握手时回的状态码。
+
+    Raises:
+        Exception: 连接层失败（拒连、超时）等拿不到状态码的错误原样抛出。
+    """
+    kwargs = {_HEADERS_KWARG: auth_headers(token)} if token else {}
+    try:
+        async with websockets.connect(url, compression=None, max_size=None, ping_interval=None,
+                                      open_timeout=timeout, **kwargs):
+            return 101
+    except Exception as exc:
+        # websockets ≥14 是 InvalidStatus(.response.status_code)，旧版是 InvalidStatusCode(.status_code)
+        code = getattr(getattr(exc, "response", None), "status_code", None) or getattr(exc, "status_code", None)
+        if code:
+            return int(code)
+        raise
+
+
+async def check_auth(args: argparse.Namespace, report: Report) -> None:
+    """Bearer 鉴权：按平台自建推理服务的探活顺序走一遍，再验不带 / 带错 Token 被拒。
+
+    平台探活每一步都带 Token：`GET /health`，非 200 再 `GET /config`，二者之一 200；
+    随后对完整地址发 WS 握手，只认 101。401/403 判为 `inference_auth_rejected` 并立即放弃，
+    5xx 判为未就绪继续重试，其余非 101 判为握手被拒。
+
+    Args:
+        args: `parse_args()` 的结果，用到 `token`、`url`、`http` 与 `http_timeout`。
+        report: 记账对象；未设 Token 时直接返回（由 `token_format` 用例说明）。
+    """
+    if not args.token:
+        return
+    probes = []
+    for path in ("/health", "/config"):
+        status, _ = http_get(f"{args.http}{path}", args.http_timeout, args.token)
+        probes.append(f"{path}→{status or '连接失败'}")
+        if status == 200:
+            break
+    report.add("auth.http_probe", status == 200, "带 Token 的探活 " + "，".join(probes) + "（须有一个 200）")
+    status, _ = http_get(f"{args.http}/config", args.http_timeout)
+    report.note(f"不带 Token 的 GET /config → {status or '连接失败'}（平台探活总带 Token，放行或拒绝都可）")
+
+    async def handshake(tag: str, token: str) -> typing.Optional[int]:
+        """握一次手并把连接层异常记成 FAIL。
+
+        Args:
+            tag: 断言名。
+            token: 本次握手用的 Token。
+
+        Returns:
+            typing.Optional[int]: 状态码；连接层失败时为 None。
+        """
+        try:
+            return await ws_handshake_status(args.url, token, args.http_timeout)
+        except Exception as exc:
+            report.add(tag, False, f"握手连接层失败 {type(exc).__name__}: {exc}")
+            return None
+
+    code = await handshake("auth.ws_with_token", args.token)
+    if code is not None:
+        report.add("auth.ws_with_token", code == 101, f"带正确 Token 握手 → {code}（须 101）")
+    wrong = "selfcheck-wrong-" + os.urandom(16).hex()
+    for tag, token, desc in (("auth.reject_missing", "", "不带 Token"), ("auth.reject_wrong", wrong, "带错 Token")):
+        code = await handshake(tag, token)
+        if code is not None:
+            report.add(tag, code in AUTH_REJECT_STATUSES,
+                       f"{desc} 握手 → {code}（须 401/403；101 表示 MS 没校验 Token，"
+                       "5xx 会被平台当成未就绪反复重试到 attach 超时）")
+
+
 CHECKS = (
     ("obs_spec", check_obs_spec, False),
+    ("token_format", check_token_format, False),
     ("config", check_config, False),
+    ("auth", check_auth, False),
     ("hello", check_hello, False),
     ("inference", check_inference, True),
     ("image_formats", check_image_formats, True),
@@ -867,9 +1047,14 @@ def parse_args(argv: list) -> argparse.Namespace:
     p.add_argument("--timeout", type=float, default=120.0, help="单次 recv 超时（秒）")
     p.add_argument("--http-timeout", type=float, default=10.0, help="/config 超时（秒）")
     p.add_argument("--skip", default="", help="跳过的用例名，逗号分隔")
+    p.add_argument("--token-env", default=DEFAULT_TOKEN_ENV,
+                   help="从该环境变量读 Bearer Token（Token 不接受命令行传值）")
+    p.add_argument("--require-auth", action="store_true",
+                   help="MS 要按 Bearer 鉴权：未设 Token 时判 FAIL 而不是跳过")
     p.add_argument("--list", action="store_true", help="只列用例名")
     args = p.parse_args(argv)
     args.http = args.http or http_base(args.url)
+    args.token = os.environ.get(args.token_env, "")
     args.obs_spec_path = args.obs_spec
     if args.obs_spec:
         # 顶层类型在加载处一次性校验：否则 [1,2,3] / "abc" / 5 这类合法 JSON 会让
@@ -927,8 +1112,9 @@ def main() -> int:
     if args.list:
         print("\n".join(name for name, _, _ in CHECKS))
         return 0
-    print(f"目标 {args.url} / {args.http}\n观测 {json.dumps(args.obs_spec, ensure_ascii=False)}", flush=True)
-    report = Report()
+    print(f"目标 {args.url} / {args.http}\n观测 {json.dumps(args.obs_spec, ensure_ascii=False)}\n"
+          f"鉴权 {'Bearer ***（' + args.token_env + '）' if args.token else '无'}", flush=True)
+    report = Report(secrets=(args.token,))
     asyncio.run(run(args, report))
     return report.summary()
 

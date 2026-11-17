@@ -33,33 +33,38 @@ description: "[runbook] 把一台能 SSH 的百舸开发机改造成具身评测
 | `references/脚本模板.md` | 服务骨架：复用 harness `PredictModelServer` 或自己实现协议，两种形态 + 启动器 |
 | `references/接入表单.md` | **阶段 0 输入 ②–⑥ 的 YAML 表单**：先选 benchmark、再按探测结果**预填**后整份回显，用户只补 `未提供` 行；含可探测字段与出处表、dm05→RoboDojo 的逐行填写示例、常见错填与判废规则 |
 | `references/协议自检.md` | 逐条可验的协议与启动自检清单（policy protocol `protocol_version = 1`） |
-| `references/评测集观测口径.md` | **观测速查表**：8 个常用 benchmark 的相机键名 / shape / state 字段名与维度 / 观测开关，可直接抄成 `obs.<benchmark>.json`。已按 `v0.5.0` 源码逐条复核；**仍是便利品不是权威**，落地前按阶段 3.5 的三个出处核一遍 |
+| `references/评测集观测口径.md` | **观测速查表**：8 个常用 benchmark 的相机键名 / shape / state 字段名与维度 / 观测开关，可直接抄成 `obs.<benchmark>.json`。已按 `v0.9.0` 源码逐条复核；**仍是便利品不是权威**，落地前按阶段 3.5 的三个出处核一遍 |
 | `references/恢复点.md` | 中断恢复：`form.yaml` / `PROGRESS` 格式（唯一定义处）、重新进入的读序、恢复分支表 |
 | `references/改主意回退.md` | 中途改了前面的决定（G4 前 / G4 后两节）：改哪个 → 回退到哪步 → 作废哪些产物 → 重跑哪道门禁 |
 | `references/冒烟测试.md` | **L1 协议级冒烟**（开发机本机，交付门禁）：前置检查表、两终端口径、就绪信号、判读，以及 Troubleshooting 表 |
 | `scripts/probe_form_defaults.sh` | **可执行（只读）**：从用户启动脚本 / ckpt / 模型环境推断表单候选值，逐行 `字段<TAB>候选值<TAB>出处`；步 5 预填表单用 |
 | `scripts/ray_env_check.sh` | **可执行**：Ray 解释器约束断言（`env -i` 复刻运行时口径）。改造后与交付前各跑一次 |
-| `scripts/ms_selfcheck.py` | **可执行**：对已起好的 MS 跑协议级自动冒烟（`/config`、HELLO、两 episode 真观测计时、四种图像编码、畸形帧容错、session 隔离），逐条 PASS/FAIL，失败退出码 1。只需 `websockets` + `msgpack` + `numpy`（png/jpeg 另需 `pillow`），**不依赖 harness** |
+| `scripts/ms_selfcheck.py` | **可执行**：对已起好的 MS 跑协议级自动冒烟（`/config`、HELLO、两 episode 真观测计时、四种图像编码、畸形帧容错、session 隔离；给了 Token（`VLA_EVAL_SERVER_TOKEN`）时另验 Token 格式与 Bearer 鉴权正反用例），逐条 PASS/FAIL，失败退出码 1。只需 `websockets` + `msgpack` + `numpy`（png/jpeg 另需 `pillow`），**不依赖 harness** |
 
-## 规定的 harness 基线：tag `v0.5.0`
+## 规定的 harness 基线：tag `v0.9.0`
 
 需要上游 harness 的服务写法（`add-model-server` 文档、`PredictModelServer` 的 chunk / batch 语义）或
-benchmark 的观测口径时，**一律对齐公开仓库 `github.com/allenai/vla-evaluation-harness` 的 tag `v0.5.0`**
-（commit `0fac650`）。本文与 `references/评测集观测口径.md` 的全部上游引用、行号都核对自这个 tag。
+benchmark 的观测口径时，**一律对齐公开仓库 `github.com/allenai/vla-evaluation-harness` 的 tag `v0.9.0`**
+（commit `8798464`，2026-11-03）。本文与 `references/评测集观测口径.md` 的全部上游引用、行号都核对自这个 tag。
 
 ```bash
-git show v0.5.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基线，可直接 checkout
+git show v0.9.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基线，可直接 checkout
 ```
 
-- **`v0.5.0` 是可 checkout 的真 git tag**；镜像 tag 里的 `h050` 只是「对齐 harness `v0.5.0`」的书写约定，
-  **它本身不是 ref**，要 checkout 请写 `v0.5.0`。
-- **不要顺手读默认分支 `main`。** 仓库已有 `v0.6.0`–`v0.8.0`，`main` 的键名与行号都已前移，
-  照它写 MS 会得到一份不报错的错分数。
+- **`v0.9.0` 是可 checkout 的真 git tag**；镜像 tag 里的 `h090`（如 `h090-261106`）只是「对齐 harness
+  `v0.9.0`」的书写约定，**它本身不是 ref**，要 checkout 请写 `v0.9.0`。
+- **不要顺手读 `main` 或其他分支。** 它们都已在 `v0.9.0` 之后前移，
+  键名与行号会再变，照它写 MS 会得到一份不报错的错分数。
+- **相对 `v0.5.0` 的破坏性变化**（旧镜像 `h050-*` 的 MS 不能照搬）：`PredictModelServer` 改成
+  `predict(obs, row: Row)` + `reset_episodes` / `finish_episodes`，`SessionContext`、`action_ensemble`、
+  `ema_alpha` 已删除；协议新增 `EPISODE_READY` / `VECTOR_STEP` / `PUBLISH` / `EPISODE_ERROR` 等由 HELLO
+  `capabilities` 协商的消息（`protocol_version` 仍是 `1`）；robotwin 新增 `send_state` → `states` 16D、
+  `max_steps` 400→1700；benchmark 收不下的 `observation_params` 从静默丢弃改为 warning；`rlbench` 删除、新增 `ocbench`。
 - **确认开发机上装的是哪一版**：
   ```bash
   "$MODEL_ENV/bin/python" -c "import vla_eval,vla_eval._version as v; print(v.version, vla_eval.__file__)"
   ```
-  不是 `v0.5.0` 时**不要默认跟随已装版本**：以 `v0.5.0` 为准核键名，并把实际版本与差异显式写进 `SETUP_INFO`
+  不是 `v0.9.0` 时**不要默认跟随已装版本**：以 `v0.9.0` 为准核键名，并把实际版本与差异显式写进 `SETUP_INFO`
   （协议细节与观测键名在版本间会变，差一版就可能差一个键名）。
 
 
@@ -220,7 +225,7 @@ git show v0.5.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基
 | ② 服务短名 `<name>` | `/opt/ms-<name>/`、`SETUP_INFO`、启动命令 | 路径无法确定，中途改名要全量返工 |
 | ③ ckpt 在**开发机上的真实位置**；≥2 个 benchmark 时另定 `ckpt_mode`（复用同一份 / 分别指定） | 阶段 5 自检、交付的启动命令 | 猜路径或给默认值 ⇒ 加载到错的权重也不报错。平台挂载路径**不在此处收**：由提交评测时的 `ckptPath` 决定，服务只经 `--ckpt` 取，yaml **不写** `checkpoint` |
 | ④ 目标 benchmark（**可多选**）：名称 + sub_bench + 用户侧启动参数（任务子集/seed/渲染类） | 每个 benchmark 一份 `<benchmark>.yaml` + `obs.<benchmark>.json`、阶段 3.5、阶段 5 | 观测口径与观测开关**不向用户要**——采信用户给的相机键名会让自检自洽通过、上平台全 0 分。详见 `接入表单.md` |
-| ⑤ harness 实际版本（`vla_eval._version.version`）与基线 `v0.5.0` 是否一致 | 阶段 3；写进 `SETUP_INFO` | 协议细节按错版本写；观测键名在版本间会变 |
+| ⑤ harness 实际版本（`vla_eval._version.version`）与基线 `v0.9.0` 是否一致 | 阶段 3；写进 `SETUP_INFO` | 协议细节按错版本写；观测键名在版本间会变 |
 | ⑥ 模型侧推理对接：conda env、最小 predict 片段、运行时资源 + 模型侧约定（图像预处理、state 打包、action 语义、chunk、per-episode 状态、要 BA（Benchmark Agent：评测时运行 benchmark 仿真环境、作为客户端连 MS 的一侧，跑在另一个 Pod）发什么） | 阶段 3 写 `predict`、阶段 3.5、阶段 5 人工核对 | 猜错不报错、产出看起来正常的错分数；「要 BA 发什么」漏了就收不到 state / 腕部相机 |
 
 ### 步 2：TCP 探测 + 授权（G2）
@@ -349,7 +354,7 @@ G3 通过后的**第二道只读检查**（不问人），与步 3 分工不同�
 | ③ckpt 在开发机上真实存在（`per_benchmark` 时每条路径都 `ls`）；选了 ≥2 个 benchmark 时 `ckpt_mode` 已定 | 缺失 → 按「改变任务性质」停，回 G3 改该行，不用默认值糊过去 |
 | ③ckpt 来源是 probe 预填时，G3 第 2 问已被用户正面认过 | 没认过 → 回 G3 第 2 问，不在这里补 |
 | ④benchmark 已选定，其观测口径能落成 `obs.<benchmark>.json` | 缺失 → 回 G3；多选时每个 benchmark 各一份 |
-| ⑤开发机上实际装的 harness 版本已读到（与基线 `v0.5.0` 的差异记进 `SETUP_INFO`） | 读不到 → 按 `v0.5.0` 核键名并在 `SETUP_INFO` 里注明未读到 |
+| ⑤开发机上实际装的 harness 版本已读到（与基线 `v0.9.0` 的差异记进 `SETUP_INFO`） | 读不到 → 按 `v0.9.0` 核键名并在 `SETUP_INFO` 里注明未读到 |
 | ⑥模型侧推理对接信息齐全；模型环境里 `websockets`/`msgpack`/`pillow` 现状 | 依赖已齐 → 计划里标 `REUSE`，零下载 |
 
 这一步**仍然一个字都不写盘**。检查项与探测口径的实现见 `references/Ray环境.md` 与 `references/开发机改造.md`。
@@ -406,7 +411,8 @@ G3 通过后的**第二道只读检查**（不问人），与步 3 分工不同�
 2. **探活是 `GET /config` 不是 `/health`**，与 WebSocket 同端口（平台 2s 探一次、900s 上限）；
    权重加载 + warmup 必须在开始监听**之前**做完（`/config` 200 后平台立刻发首帧，默认只等 30s）。
 3. **ACTION 永远是 1-D 单步** `(action_dim,)`；chunk 只在服务内缓存逐帧 pop。
-4. **per-episode 状态按 `session_id` 分桶**（多 shard 共享一个 MS），`EPISODE_START` 清空；
+4. **per-episode 状态不能用进程级单变量**（多 shard 共享一个 MS）：形态 A 按 `row.id` 分桶、在
+   `reset_episodes` 里清空；形态 B 按连接（`session_id`）分桶、`EPISODE_START` 清空；
    推理异常回 `ERROR` 而**不是**零动作、不关连接。
 
 raw 路径**不注入** `HF_HOME` / `HF_HUB_OFFLINE` / `HF_MODULES_CACHE`，要就自己在控制台 envs 里给
@@ -420,12 +426,12 @@ raw 路径**不注入** `HF_HOME` / `HF_HUB_OFFLINE` / `HF_MODULES_CACHE`，要�
 
 ### 真实键名只有三个可信来源
 
-出处与版本口径见本文「规定的 harness 基线：tag `v0.5.0`」——**按 tag `v0.5.0` 核**，
+出处与版本口径见本文「规定的 harness 基线：tag `v0.9.0`」——**按 tag `v0.9.0` 核**，
 开发机上装的若不是这一版，把实际版本与差异写进 `SETUP_INFO`。
 按可信度排序，**不要靠开发机上手工跑通时用的那套**（那常是作者 demo 的另一套预处理）：
 
 1. 同 benchmark 的参考 MS 实现 `src/vla_eval/model_servers/<name>.py`
-   （如 robodojo 的 `robodojo_pi05.py:70` `_CAMERA_MAP`：key 是**模型侧槽位**
+   （如 robodojo 的 `robodojo_pi05.py:69` `_CAMERA_MAP`：key 是**模型侧槽位**
    `cam_high`/`cam_left_wrist`/`cam_right_wrist`，value 是可接受的**观测键名候选**，
    `cam_high` 槽位接受 `cam_head` 或 `cam_high`——这张表的形状本身就是「两套命名空间」的证据）
 2. benchmark 实现本身 `src/vla_eval/benchmarks/<name>/`（看它往 `Observation` 里塞了什么键）
@@ -437,16 +443,18 @@ raw 路径**不注入** `HF_HOME` / `HF_HUB_OFFLINE` / `HF_MODULES_CACHE`，要�
 同时要对齐的不止键名：**图像是两层** `obs["images"][cam]`（8/8 benchmark 无例外，顶层只有
 `images` / state / `task_description`）、RGB/BGR、HWC/CHW、归一化、图像翻转、state 维度与打包顺序、
 `task_description` 的字段名。**线缆上的 state 字段名按 benchmark 三分**：`state`（robodojo；robocasa365
-是**嵌套 dict** 不是向量）、`states`（libero / libero_pro / calvin / behavior1k / simpler；robocasa
-在 v0.5.0 根本不发、v0.8.0 起才发 9D）、`joint_state`（robotwin）
+是**嵌套 dict** 不是向量）、`states`（libero / libero_pro / calvin / behavior1k / simpler / robocasa 9D，
+robocasa 的 `send_state` 默认关）、
+`joint_state`（robotwin 恒发 14D；`send_state` 开时**另发** `states` 16D 末端位姿）
 ——payload 就是 benchmark 的 `make_obs()` 返回的那个 dict 一字不改过线，没有统一字段名（对照表见
 `references/评测集观测口径.md` §4）。`obs.<benchmark>.json` 里的 `states` 是**维度声明**，字段名由 `state_key` 给出。
 MS 优先按该 benchmark yaml 里写死的 `state_key` 取；兼容写法 `obs.get("state", obs.get("states", obs.get("joint_state")))` 只作后备，**三个都缺就抛错、不要补零**
-——零状态常被模型当合法输入，把维度/量纲问题盖成一份错分数（上游 `model_servers/oft.py` 的
+——零状态常被模型当合法输入，把维度/量纲问题盖成一份错分数（上游 `model_servers/oft.py:169` 的
 `np.zeros(PROPRIO_DIM)` 兜底正是这种写法，别学）。
-**上游没有一个 MS 兜全三种键名**：`pi0`/`oft`/`groot`/`starvla`/`lerobot` 只兜 `states`/`state`，
-`dexbotic/cogact` 只读 `joint_state`，而 `xvla` 给 robotwin 配了 `send_state: True` 却不读
-`joint_state`——照抄任何一个都会在某个 benchmark 上静默拿不到 state。
+**上游没有一个 MS 兜全三种键名**：`pi0`/`oft`/`starvla`/`lerobot`/`vlanext`/`molmobot` 只兜 `states`/`state`，
+`dexbotic/cogact` 只读 `joint_state`，`xvla` 读 `controller_states`→`states`→`state`（robotwin 上靠
+`send_state: True` + `action_type: ee` 拿 `states` 16D，不读 `joint_state`）——照抄任何一个都会在某个
+benchmark 上静默拿不到 state，robotwin 上两个 state 字段的维度与语义也不同（关节 14D vs 末端 16D）。
 state 发不发由 MS 自己在 `HELLO.observation_params` 里声明（`send_state` / `send_proprio`）：
 没声明就不会发，MS 却按必填读 → 每帧 ERROR（X-VLA on SimplerEnv 实测掉到 0%）。
 
@@ -503,7 +511,7 @@ HELLO 阶段还会在「MS 声明的键名」与「将发送的键名」零交�
 （只在显式传入 `SETUP_PROXY` 时于本进程内生效，不写任何配置文件；理由见脚本注释）、
 运行时资源真建一次 + `test -f` 断言、
 `chmod -R a+rX`、结尾写一份 `/opt/ms-<name>/SETUP_INFO`（记 `setup_sha256` / 日期 /
-**本次采用的 ray + python 版本及其来源（默认钉死值，或 `RAY_VERSION`/`PY_VERSION` 覆盖值）** / **harness 实际版本与规定基线 `v0.5.0` 的差异**，
+**本次采用的 ray + python 版本及其来源（默认钉死值，或 `RAY_VERSION`/`PY_VERSION` 覆盖值）** / **harness 实际版本与规定基线 `v0.9.0` 的差异**，
 复现与回溯时的唯一凭据）。
 
 ## 步 7 报告：改造摘要 + 按需详细版
@@ -539,7 +547,7 @@ HELLO 阶段还会在「MS 声明的键名」与「将发送的键名」零交�
 
 | 文件 | 作用 | 关键约定 |
 |---|---|---|
-| `/opt/ms-<name>/server.py` | MS 本体：`GET /config` + WebSocket msgpack | 端口读 `MS_PORT`；权重与 warmup 在监听前完成；ACTION 1-D；按 `session_id` 分桶 |
+| `/opt/ms-<name>/server.py` | MS 本体：`GET /config` + WebSocket msgpack | 端口读 `MS_PORT`；权重与 warmup 在监听前完成；ACTION 1-D；per-episode 状态按 `row.id`（形态 A）/ `session_id`（形态 B）分桶 |
 | `/opt/ms-<name>/serve.sh` | 启动器，控制台命令就填它 | `MODEL_ENV` 绝对路径由 `setup.sh` 写入；端口优先 `MS_PORT`，纯数字首参可覆盖 |
 | `/opt/ms-<name>/_base.yaml`、`<benchmark>.yaml` × N | 按 benchmark 选口径的服务配置，`serve.sh --config` 选一份 | `extends: _base.yaml`；写死 `state_key` / `state_dim` / `cameras` / `obs_spec`；**不写 `checkpoint`** |
 | `/opt/ms-<name>/obs.<benchmark>.json` × N | 每个 benchmark 的真实观测 spec | 相机键名 + shape + state 维度，自检据此发帧 |
@@ -563,6 +571,8 @@ bash /opt/ms-<name>/ray_env_check.sh             # 要 RAY_ENV_OK + 退出码 0
 # 3. 协议级自动冒烟（另一个终端）。解释器必须用模型环境那个，不是裸 python3
 "$MODEL_ENV/bin/python" /opt/ms-<name>/ms_selfcheck.py --url ws://127.0.0.1:18000 \
     --obs-spec /opt/ms-<name>/obs.<benchmark>.json   # 与 --config 同一个 benchmark；要「n/n 通过」+ 退出码 0
+# 4. 仅当 MS 还要以「自建推理服务」接入、开了 Bearer 鉴权时：MS 与自检读同一个环境变量再跑一遍
+#    export VLA_EVAL_SERVER_TOKEN=<token>，重起 MS 后在第 3 步命令末尾加 --require-auth
 ```
 
 ⚠️ 自检入口一律是 **`/opt/ms-<name>/`**（`setup.sh` 的落点）。`/tmp/setup-<name>/` 只是上传中转，
@@ -571,7 +581,9 @@ bash /opt/ms-<name>/ray_env_check.sh             # 要 RAY_ENV_OK + 退出码 0
 `ms_selfcheck.py` 自动覆盖：**`obs_spec` 口径门禁**（`--obs-spec` 缺省即 FAIL）、
 `/config` 200 与 `?max_batch_size=1`、HELLO 的 `protocol_version`/`seq` 回显、
 两个 episode × N 步真观测计时（首帧预算默认 30s）、ACTION 是 1-D 有限值且与 `action_spec` 维度一致、
-四种图像编码（`ndarray`/`raw`/`png`/`jpeg`）、畸形帧回 ERROR 且不断连可恢复、两条并发连接的 session 隔离。
+四种图像编码（`ndarray`/`raw`/`png`/`jpeg`）、畸形帧回 ERROR 且不断连可恢复、两条并发连接的 session 隔离；
+给了 Token 时另验 Token 格式（控制面规则）与鉴权（带 Token 的 `/health`/`/config`/握手通过，
+不带、错 Token 握手必须 401/403）。输出里 Token 一律打成 `Bearer ***`。
 `--obs-spec` 给本 benchmark 的**真实**相机键名与形状
 （口径与来源见「阶段 3.5：观测对齐」），`--list` 看用例名。
 

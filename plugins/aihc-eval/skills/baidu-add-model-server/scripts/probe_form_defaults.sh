@@ -164,7 +164,7 @@ try:
     import vla_eval._version as v; hv = v.version
 except Exception:
     hv = "未装"
-print(f"installed_version\t{hv}\tvla_eval._version（基线 v0.5.0；未装 ⇒ SETUP_INFO 注明按 v0.5.0 核）")
+print(f"installed_version\t{hv}\tvla_eval._version（基线 v0.9.0；未装 ⇒ SETUP_INFO 注明按 v0.9.0 核）")
 print("proto_deps\t" + " ".join(f"{p}={ver(p)}" for p in ("websockets", "msgpack", "pillow")) + "\t模型环境；全有 ⇒ setup.sh DEPS_REUSE")
 print("stack_versions\t" + " ".join(f"{p}={ver(p)}" for p in ("torch", "numpy", "transformers")) + "\tdeps_conflict 判定用（装 vla_eval 是否动大版本）")
 PY

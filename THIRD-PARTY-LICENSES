@@ -124,14 +124,63 @@ below are runtime dependencies installed by the user, or quoted excerpts.
   Modified:   no
 
   Component:  vla-evaluation-harness
-  Version:    v0.5.0
+  Version:    v0.9.0
   Homepage:   https://github.com/allenai/vla-evaluation-harness
   License:    Apache-2.0
   License URL:https://github.com/allenai/vla-evaluation-harness/blob/main/LICENSE
   Usage:      Referenced by aihc-eval documentation; probe_form_defaults.sh reads
-              the installed version. references/评测集观测口径.md quotes an 8-line
+              the installed version. references/评测集观测口径.md quotes a 25-line
               excerpt of src/vla_eval/orchestrator.py with source attribution.
-  Modified:   yes (excerpt only, Chinese comments added)
+  Modified:   yes (excerpt only, abridged, Chinese comments added)
+
+  Component:  anyio
+  Version:    any (user-installed, installed with vla-evaluation-harness)
+  Homepage:   https://github.com/agronholm/anyio
+  License:    MIT
+  License URL:https://github.com/agronholm/anyio/blob/master/LICENSE
+  Usage:      Runtime dependency of aihc-eval baidu-add-benchmark echo_ms.py;
+              installed by the user, not distributed with this product.
+  Modified:   no
+
+  Component:  imageio
+  Version:    any (user-installed)
+  Homepage:   https://github.com/imageio/imageio
+  License:    BSD-2-Clause
+  License URL:https://github.com/imageio/imageio/blob/master/LICENSE
+  Usage:      Runtime dependency of aihc-eval baidu-add-benchmark ba_selfcheck.py
+              (video frame decoding); installed by the user, not distributed.
+  Modified:   no
+
+  Component:  imageio-ffmpeg
+  Version:    any (user-installed)
+  Homepage:   https://github.com/imageio/imageio-ffmpeg
+  License:    BSD-2-Clause (Python package); the bundled ffmpeg binary is a
+              GPL-3.0-or-later build (configured with --enable-gpl --enable-version3)
+  License URL:https://github.com/imageio/imageio-ffmpeg/blob/master/LICENSE
+  Usage:      Runtime dependency of aihc-eval baidu-add-benchmark ba_selfcheck.py
+              and probe_form_defaults.sh (video decoding). The user installs it
+              from PyPI on their own machine; this product neither bundles nor
+              redistributes the package or the ffmpeg binary, and only imports
+              the Python package.
+  Modified:   no
+
+  Component:  PyYAML
+  Version:    any (user-installed)
+  Homepage:   https://github.com/yaml/pyyaml
+  License:    MIT
+  License URL:https://github.com/yaml/pyyaml/blob/master/LICENSE
+  Usage:      Used by aihc-eval baidu-add-benchmark probe_form_defaults.sh (inline
+              python); installed by the user, not distributed with this product.
+  Modified:   no
+
+  Component:  uv
+  Version:    any (user-installed)
+  Homepage:   https://github.com/astral-sh/uv
+  License:    MIT OR Apache-2.0
+  License URL:https://github.com/astral-sh/uv/blob/main/LICENSE-MIT
+  Usage:      Install command referenced in aihc-eval baidu-add-benchmark
+              references/Ray环境.md; installed by the user, not distributed.
+  Modified:   no
 
 ================================================================================
 When a component is added, its full license text MUST be reproduced in the
