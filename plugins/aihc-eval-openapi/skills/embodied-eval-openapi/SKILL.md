@@ -3,6 +3,12 @@ name: embodied-eval-openapi
 description: 百舸（AIHC）具身评测 OpenAPI 技术支持：用随附签名脚本和请求体模板调用 10 个评测接口，指导客户用预置模型、自己的权重或自己的推理镜像创建 LIBERO、RoboTwin 等评测任务，并排查 400/403/404/500 报错、长时间排队、任务失败、分数偏低、回放视频链接失效等问题；客户通过 OpenAPI、Go SDK 或 aihc CLI 使用具身评测时使用。
 ---
 
+<!-- knowship:check -->
+> **开始前先检查版本**：运行 `python3 <skill目录>/scripts/version_check.py`，看公开插件市场上有没有更新的版本（结果缓存 10 小时）。
+> - 结论是「有新版本」（退出码 1）：告诉用户新版本号和更新命令，然后照常继续。
+> - 结论是「查不了」（退出码 3）：告诉用户这次没法检查版本，然后照常继续。
+<!-- /knowship:check -->
+
 # 百舸具身评测 OpenAPI 技术支持
 
 ## 适用场景

@@ -17,15 +17,17 @@
 """Model Server 协议自检（用户自定义镜像）。
 
 对一台**已经起好**的 MS 连续跑一组可自动判定的断言，覆盖 `references/协议自检.md`
-里能自动化的部分：`/config` 探活、HELLO 字段、信封四字段、seq 回显、首帧预算、
-ACTION 1-D 与有限值、图像四种编码、ERROR 不断连、无 episode 上下文不崩、session 分桶、
-多 episode 状态重置。
+里能自动化的部分：`/config` 探活、HELLO 字段、**`action_spec` 与 benchmark 口径的一致性**、
+信封四字段、seq 回显、首帧预算、ACTION 1-D 与有限值、图像四种编码、ERROR 不断连、
+无 episode 上下文不崩、session 分桶、多 episode 状态重置、
+`VECTOR_STEP` / `VECTOR_RESULT`（robodojo / ocbench 的硬门禁）。
 
 **不依赖上游 harness**：只用 websockets + msgpack + numpy（png/jpeg 另需 pillow），
 因此可以直接装进模型环境在开发机上跑。退出码 0 表示全过，非 0 表示有失败项。
 
 用法：
     python ms_selfcheck.py --url ws://127.0.0.1:18000 --obs-spec obs.robodojo.json
+    python ms_selfcheck.py --url ws://127.0.0.1:18000 --obs-spec obs.robodojo.json --benchmark robodojo
     python ms_selfcheck.py --url ws://127.0.0.1:18000 --obs-spec obs.robodojo.json --steps 3
     python ms_selfcheck.py --list
     python ms_selfcheck.py --url ws://127.0.0.1:18000 --skip image_formats,session_isolation
@@ -95,6 +97,140 @@ MSG_ACTION = "action"
 MSG_EPISODE_START = "episode_start"
 MSG_EPISODE_END = "episode_end"
 MSG_ERROR = "error"
+MSG_VECTOR_STEP = "vector_step"
+MSG_VECTOR_RESULT = "vector_result"
+
+# v0.9.0 里只有这两个 benchmark 是 `VectorStepBenchmark`（v0.9.0 实测：
+# `git grep "VectorStepBenchmark)" v0.9.0 -- src/vla_eval/benchmarks/`）。
+# 它们**必须**拿到 `capabilities.vector_step`，否则客户端连一条 episode 都不跑。
+VECTOR_BENCHMARKS = frozenset({"robodojo", "ocbench"})
+
+# ── benchmark 侧的 action_spec（逐字抄自 tag `v0.9.0` / commit 8798464 的
+# `benchmarks/<name>/benchmark.py:get_action_spec()`）。运行时按构造参数分多套候选
+# （robotwin 的 action_type、calvin 的 absolute_action），HELLO 与**任一**候选兼容即算过。
+# `dims` 为 0 表示不校验长度。**不要照着某个模型改这张表**：它是 benchmark 的事实。
+# harness 侧 `check_specs()` 对不上只产 warning、评测照跑 ⇒ 分数静默错；本用例把它做成硬门禁。
+BENCH_ACTION_SPECS = {
+    "robodojo": [
+        {"actions": {"name": "actions", "dims": 14,
+                     "format": "absolute_joint_positions_with_grippers"}},
+    ],
+    "robotwin": [
+        # action_type="qpos"（默认）：14D 双臂关节
+        {"joints": {"name": "joints", "dims": 14, "format": "joint_positions"}},
+        # action_type="ee"：16D 双臂末端位姿
+        {"ee_pose": {"name": "ee_pose", "dims": 16,
+                     "format": "dual_eef_pos3_quatwxyz4_gripper1"}},
+    ],
+    "libero": [
+        {"position": {"name": "position", "dims": 3, "format": "delta_xyz"},
+         "rotation": {"name": "rotation", "dims": 3, "format": "axis_angle"},
+         "gripper": {"name": "gripper", "dims": 1, "format": "binary_close_positive"}},
+    ],
+    "calvin": [
+        # absolute_action=False（默认）：增量
+        {"position": {"name": "position", "dims": 3, "format": "delta_xyz"},
+         "rotation": {"name": "rotation", "dims": 3, "format": "euler_xyz"},
+         "gripper": {"name": "gripper", "dims": 1, "format": "binary_close_negative"}},
+        # absolute_action=True：rotation 走 ROTATION_EULER_ACCEPTS_AA（接受 axis_angle）
+        {"position": {"name": "position", "dims": 3, "format": "absolute_xyz"},
+         "rotation": {"name": "rotation", "dims": 3, "format": "euler_xyz",
+                      "accepts": ["euler_xyz", "axis_angle"]},
+         "gripper": {"name": "gripper", "dims": 1, "format": "binary_close_negative"}},
+    ],
+    "simpler": [
+        {"position": {"name": "position", "dims": 3, "format": "delta_xyz"},
+         "rotation": {"name": "rotation", "dims": 3, "format": "euler_xyz"},
+         "gripper": {"name": "gripper", "dims": 1, "format": "binary_close_positive"}},
+    ],
+    "robocasa": [
+        {"position": {"name": "position", "dims": 3, "format": "delta_xyz"},
+         "rotation": {"name": "rotation", "dims": 3, "format": "euler_xyz"},
+         "gripper": {"name": "gripper", "dims": 1, "format": "raw"}},
+    ],
+    "robocasa365": [
+        {"position": {"name": "position", "dims": 3, "format": "delta_xyz"},
+         "rotation": {"name": "rotation", "dims": 3, "format": "axis_angle"},
+         "gripper": {"name": "gripper", "dims": 1, "format": "binary_close_01"},
+         "base_motion": {"name": "base_motion", "dims": 4, "format": "base_velocity3_torso1"},
+         "control_mode": {"name": "control_mode", "dims": 1, "format": "base_mode_01"}},
+    ],
+    "behavior_1k": [
+        {"joints": {"name": "joints", "dims": 23, "format": "joint_positions_r1pro"}},
+    ],
+}
+
+# benchmark 名的别名（调用方手填 / skill 文档两种写法都认）
+BENCH_ALIASES = {
+    "libero_pro": "libero",
+    "libero_plus": "libero",
+    "libero_mem": "libero",
+    "behavior1k": "behavior_1k",
+    "behavior-1k": "behavior_1k",
+}
+
+# ── 构造参数 → 它实际走哪一套 action spec。上面「与某候选兼容」只说明「MS 的说法是
+# benchmark 的一种可能」；真正跑哪一套由提交评测时的 sub_bench 参数决定。robotwin 默认
+# `action_type="qpos"`，此时 16D 的 `ee_pose` 会被**静默截断**成 14 跑完全程
+# （`robotwin/benchmark.py:521-524`，不报错）；反过来 `ee` 模式 16D 不符才是 ValueError。
+# 所以 `--bench-param` 传了就把候选收窄到实际那一套，不传只打提示。
+# 值格式：参数名 → {取值: (候选必须含的段, 候选里必须出现的 format)}
+BENCH_PARAM_FILTERS = {
+    "robotwin": {"action_type": {"qpos": ({"joints"}, ""), "ee": ({"ee_pose"}, "")}},
+    "calvin": {"absolute_action": {"false": (set(), "delta_xyz"), "true": (set(), "absolute_xyz")}},
+}
+
+
+def parse_bench_params(raw: list) -> dict:
+    """把 `--bench-param` 的 `KEY=VALUE`（可重复、可逗号分隔）解析成 dict。
+
+    Args:
+        raw: `--bench-param` 的原始值列表。
+
+    Returns:
+        dict: 参数名 → 取值字符串；格式不对的项忽略。
+    """
+    out = {}
+    for item in raw or []:
+        for part in str(item).split(","):
+            if "=" not in part:
+                continue
+            name, value = part.split("=", 1)
+            if name.strip():
+                out[name.strip()] = value.strip()
+    return out
+
+
+def select_candidates(candidates: list, filters: dict, params: dict) -> list:
+    """按构造参数把候选收窄到实际那一套。
+
+    Args:
+        candidates: `BENCH_ACTION_SPECS` 里该 benchmark 的候选列表。
+        filters: `BENCH_PARAM_FILTERS` 里该 benchmark 的过滤表；空表示与参数无关。
+        params: 已解析的 `--bench-param`。
+
+    Returns:
+        list: 收窄后的候选；参数与内置表不匹配时返回空列表。
+    """
+    keys = set()
+    fmt = ""
+    for name, spec in filters.items():
+        value = params.get(name)
+        if value is None:
+            continue
+        hit = spec.get(str(value).strip().lower())
+        if hit is None:
+            return []
+        keys |= hit[0]
+        fmt = hit[1] or fmt
+    out = []
+    for cand in candidates:
+        if keys and not keys <= set(cand):
+            continue
+        if fmt and fmt not in {seg.get("format") for seg in cand.values()}:
+            continue
+        out.append(cand)
+    return out
 
 # ── 鉴权口径（与平台自建推理服务的创建期校验、harness 客户端同口径）
 DEFAULT_TOKEN_ENV = "VLA_EVAL_SERVER_TOKEN"
@@ -505,6 +641,93 @@ def build_obs(spec: dict, image_format: str, rng: typing.Any) -> dict:
     return obs
 
 
+def build_batch(spec: dict, image_format: str, rng: typing.Any, rows: int = 1) -> dict:
+    """按 spec 造一个 **batch**（`VECTOR_STEP.observations` 的列式口径）。
+
+    `VECTOR_STEP` 的观测不是单帧，而是「每列一个带行维的数组」：第 i 行对应
+    `slots[i]` 这个环境槽位。单槽位时行数为 1，形状是 `[1, ...]` 而不是 `[...]`。
+
+    Args:
+        spec: 见 `DEFAULT_OBS_SPEC`。
+        image_format: 同 `build_obs()`。
+        rng: `np.random.Generator`。
+        rows: 行数（= 本轮 `slots` 的个数）。
+
+    Returns:
+        可直接放进 `VECTOR_STEP.payload["observations"]` 的列式 batch。
+
+    Raises:
+        ValueError: rows 小于 1。
+    """
+    if rows < 1:
+        raise ValueError(f"rows 必须 >= 1，实际 {rows}")
+    batch = {"images": {}}
+    for key, shape in (spec.get("images") or {}).items():
+        cols = []
+        for _ in range(rows):
+            img = rng.integers(0, 255, tuple(shape), dtype=np.uint8)
+            cols.append(img if image_format == "ndarray" else encode_image(img, image_format))
+        batch["images"][key] = np.stack(cols) if image_format == "ndarray" else cols
+    if spec.get("states"):
+        batch[spec.get("state_key") or "state"] = rng.standard_normal(
+            (rows, int(spec["states"]))).astype(np.float32)
+    if spec.get("task_description"):
+        batch["task_description"] = [spec["task_description"]] * rows
+    return batch
+
+
+def batch_rows(batch: typing.Any) -> typing.Optional[int]:
+    """列式 batch 的行数；各列长度不一致或为空时返回 None（与 harness `columns.num_rows` 同口径）。
+
+    Args:
+        batch: 列式 batch，可能是嵌套 dict（`images`）或直接是 ndarray。
+
+    Returns:
+        行数；无法判定时为 None。
+    """
+    lengths = set()
+
+    def walk(node: typing.Any) -> None:
+        """递归收集 node 中各数组（list / tuple / ndarray）的长度，写入 lengths。
+
+        Args:
+            node: batch 或其中的子节点。
+
+        Returns:
+            None。
+        """
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, (list, tuple, np.ndarray)):
+            lengths.add(len(node))
+
+    walk(batch)
+    return lengths.pop() if len(lengths) == 1 else None
+
+
+async def vector_step(cli: MsClient, payload: dict) -> tuple:
+    """发一条 `VECTOR_STEP` 并等 `VECTOR_RESULT`。
+
+    Args:
+        cli: 已完成 HELLO 的客户端。
+        payload: `{ends, starts, slots, observations}`。
+
+    Returns:
+        `(msg, elapsed)`：`msg` 是 VECTOR_RESULT 或 ERROR 的完整信封。
+
+    Raises:
+        asyncio.TimeoutError: 服务端不认这条消息（不实现 vector 时最常见的形态）。
+        websockets.exceptions.ConnectionClosed: 服务端在回包前断开。
+        ValueError: 回包信封不合规。
+    """
+    t0 = time.monotonic()
+    seq = await cli.send(MSG_VECTOR_STEP, payload)
+    msg = await cli.recv()
+    msg["_req_seq"] = seq
+    return msg, time.monotonic() - t0
+
+
 def assert_action(msg: dict, report: Report, tag: str, expect_dim: int = 0) -> int:
     """校验一条 ACTION 回包，返回动作维度（失败返 0）。
 
@@ -550,15 +773,22 @@ def spec_dim(server_info: dict) -> int:
         server_info: 服务端 HELLO 的 payload。
 
     Returns:
-        int: `action_spec` 为 int 时直接返回；为 dict 时累加各项 `shape` 元素数
-        （空 shape 计 1）或 int 值；含无法识别的项或缺失时返回 0。
+        int: `action_spec` 认定字段是 v0.9.0 的 `dims`（`shape` 只作兜底，好让本函数在
+        `action_spec.schema` 已判 FAIL 时仍能给出维度提示）；`dims` 为 int 时直接加，
+        为 list/tuple 时取其元素数（空计 1）；整体为 int 时直接返回；含无法识别的项或缺失时返回 0。
     """
     spec = server_info.get("action_spec")
     if isinstance(spec, dict):
         total = 0
         for val in spec.values():
-            if isinstance(val, dict) and isinstance(val.get("shape"), (list, tuple)):
-                total += int(np.prod(val["shape"])) if val["shape"] else 1
+            if isinstance(val, dict):
+                dims = val.get("dims", val.get("shape"))
+                if isinstance(dims, int):
+                    total += dims
+                elif isinstance(dims, (list, tuple)):
+                    total += int(np.prod(dims)) if dims else 1
+                else:
+                    return 0
             elif isinstance(val, int):
                 total += val
             else:
@@ -679,17 +909,144 @@ async def check_hello(args: argparse.Namespace, report: Report) -> dict:
                    f"model_server={info.get('model_server')!r}")
         report.note(f"HELLO payload 键: {sorted(info)}")
         report.note(f"action_spec={info.get('action_spec')} 推出维度={spec_dim(info)}")
-        declared = (info.get("observation_spec") or {}).get("images") or {}
+        legacy = [key for key, val in (info.get("observation_spec") or {}).items()
+                  if isinstance(val, dict) and not {"name", "dims", "format"} <= set(val)]
+        if legacy:
+            report.add("hello.observation_spec_schema", False,
+                       f"{legacy} 缺 v0.9.0 的 name/dims/format（写成了按别名嵌套的 map？）。"
+                       "`DimSpec.from_dict` 会抛 KeyError('name')，被 orchestrator 吞成一条 warning，"
+                       "跨端观测校验等于没做；相机别名声明放到 HELLO 的另一个键里")
+        declared = (info.get("camera_slots") or (info.get("observation_spec") or {}).get("images") or {})
         sending = (args.obs_spec or {}).get("images") or {}
         if isinstance(declared, dict) and declared and isinstance(sending, dict) and sending:
-            lhs = {str(k).strip().lower() for k in declared}
+            lhs = {str(k).strip().lower() for key, val in declared.items()
+                   for k in ([key] + list(val) if isinstance(val, list) else [key])}
             rhs = {str(k).strip().lower() for k in sending}
             if not (lhs & rhs):
                 report.note(
-                    f"MS 声明的相机键名 {sorted(declared)} 与将发送的 {sorted(sending)} 零交集："
+                    f"MS 声明的相机键名 {sorted(lhs)} 与将发送的 {sorted(rhs)} 零交集："
                     "MS 内部必须做「观测键名 → 模型槽位」的别名映射，否则 inference 会 ERROR；"
-                    "不要反过来改模型侧参数去迁就观测键名（会静默改变模型输入）")
+                    "不要反过来改模型参数去迁就观测键名（会静默改变模型输入）")
         return info
+
+
+def action_spec_reasons(server: dict, expect: dict) -> list:
+    """复刻 harness `DimSpec.is_compatible()` + `check_specs()` 的动作半边语义。
+
+    Args:
+        server: HELLO 声明的 `action_spec`（key → `{name, dims, format, ...}`）。
+        expect: `BENCH_ACTION_SPECS` 里的一套候选（key → 期望段）。
+
+    Returns:
+        list: 不兼容原因，空列表表示兼容。规则与上游一致：benchmark 要的段缺失即不兼容；
+        交集内 `accepts` 存在时查成员、否则 `format` 等值，`format` 相同才比 `dims`
+        （两端都 >0 才比）。
+    """
+    reasons = []
+    for key, want in expect.items():
+        got = server.get(key)
+        if not isinstance(got, dict):
+            reasons.append(f"{key}: benchmark 要这段，MS 没声明")
+            continue
+        accepts = want.get("accepts")
+        got_fmt = got.get("format")
+        if accepts is not None:
+            if got_fmt not in accepts:
+                reasons.append(f"{key}: format `{got_fmt}` 不在 benchmark accepts {sorted(accepts)} 内")
+            continue
+        if got_fmt != want.get("format"):
+            reasons.append(f"{key}: format `{got_fmt}` vs benchmark `{want.get('format')}`")
+            continue
+        got_dims = got.get("dims", got.get("shape"))
+        want_dims = want.get("dims", 0)
+        if isinstance(got_dims, int) and want_dims > 0 and got_dims > 0 and got_dims != want_dims:
+            reasons.append(f"{key}: dims {got_dims} vs benchmark {want_dims}")
+    return reasons
+
+
+async def check_action_spec(args: argparse.Namespace, report: Report, info: dict) -> None:
+    """动作口径门禁：HELLO 的 `action_spec` 必须与 benchmark 的 `get_action_spec()` 兼容。
+
+    harness 侧对不上**只产一条 warning、不中断**，评测照跑、分数是错的——这条用例把
+    同一份比对搬到交付门禁上，做成硬失败。比对算法与 `is_compatible()` 一致：
+    benchmark 要的段 MS 没声明即不兼容；交集内 `accepts` 存在时查成员，否则 `format`
+    等值（`format` 相同才比 `dims`）。
+
+    内置表只覆盖常用 benchmark；表外的名字**不判 FAIL**（只提示人工核），因为凭记忆
+    编一个期望值比不查更糟。
+
+    Args:
+        args: `parse_args()` 的结果，用到 `benchmark`（为空时取 HELLO 的 `benchmark`）与
+            `bench_param`（提交评测时的构造参数，如 `action_type=ee`）。
+        report: 记账对象。
+        info: `check_hello()` 返回的 HELLO payload。
+    """
+    spec = info.get("action_spec")
+    if not report.add("action_spec.declared", isinstance(spec, dict) and bool(spec),
+                      f"HELLO action_spec={spec!r}（必须声明；每段是 name/dims/format 的 DimSpec 口径）"):
+        return
+    # schema 与维度同样要门禁：写成旧写法的 `shape` 时 `dims` 缺失，下面的维度比对会被跳过，
+    # 一个 16D 的 `joints` 就溜过去了。v0.9.0 的 `to_dict()` 一定输出整数 `dims`，
+    # harness `DimSpec.from_dict()` 也直接取 `d["dims"]`（缺键即 KeyError）。
+    bad = [key for key, val in spec.items()
+           if not (isinstance(val, dict) and {"name", "dims", "format"} <= set(val)
+                   and isinstance(val.get("dims"), int))]
+    detail = (f"{bad} 缺 v0.9.0 的 name/dims/format，或 dims 不是整数（写成 shape/dtype 即视为旧口径）。"
+              "`DimSpec.from_dict` 会抛 KeyError('name')，被 orchestrator 吞成一条 warning，"
+              "跨端动作校验等于没做" if bad
+              else "每段都是 name + 整数 dims + format")
+    if not report.add("action_spec.schema", not bad, detail):
+        return
+    bench = str(args.benchmark or info.get("benchmark") or "").strip().lower()
+    key = BENCH_ALIASES.get(bench, bench)
+    candidates = BENCH_ACTION_SPECS.get(key)
+    if not candidates:
+        report.add("action_spec.compatible", True,
+                   f"benchmark={bench or '<未声明>'} 不在内置表 {sorted(BENCH_ACTION_SPECS)} 内，"
+                   "本条不判 FAIL：请按 `git show v0.9.0:src/vla_eval/benchmarks/<name>/benchmark.py` "
+                   "的 get_action_spec() 人工核 format/dims（harness 侧 mismatch 只打 warning，分数会静默错）")
+        return
+    tried = []
+    filters = BENCH_PARAM_FILTERS.get(key, {})
+    params = parse_bench_params(getattr(args, "bench_param", None))
+    unknown = sorted(set(params) - set(filters))
+    if unknown:
+        report.add("action_spec.compatible", False,
+                   f"benchmark={key} 不认识 --bench-param {unknown}，本用例等于没被钉住。"
+                   f"可选参数: { {k: sorted(v) for k, v in filters.items()} or '<该 benchmark 无构造参数维度>'}。"
+                   "拼错的参数会静默失效，所以这里判 FAIL")
+        return
+    narrowed = select_candidates(candidates, filters, params)
+    if not narrowed:
+        report.add("action_spec.compatible", False,
+                   f"benchmark={key} 传了 {params}，但内置表没有匹配的候选（该 benchmark 的合法取值："
+                   f"{ {k: sorted(v) for k, v in filters.items()} }）")
+        return
+    for cand in narrowed:
+        reasons = action_spec_reasons(spec, cand)
+        if not reasons:
+            report.add("action_spec.compatible", True,
+                       f"benchmark={key} 命中候选 {sorted(cand)}"
+                       f"{'（' + str(params) + '）' if params else ''}；MS 声明 "
+                       f"{ {k: v.get('format') for k, v in spec.items()} }")
+            extra = sorted(set(spec) - set(cand))
+            if extra:
+                report.note(f"MS 多声明了 benchmark 不消费的段 {extra}：harness 不报错，"
+                            "但这段格式不会被校验，确认是别名/冗余声明而非把两套口径混在一起")
+            if filters and not params:
+                report.note(
+                    f"benchmark={key} 的动作口径还由构造参数决定：{ {k: sorted(v) for k, v in filters.items()} }。"
+                    "本条只验「MS 声明的段」自洽，**不知道 BA 侧实际传了什么**：robotwin 默认 "
+                    "action_type=qpos 时 16D 的 ee_pose 会被静默截断成 14 跑完全程（不报错）。"
+                    "按提交评测的参数用 --bench-param 复跑一遍把它钉住")
+            return
+        tried.append(f"候选 {sorted(cand)}: " + "; ".join(reasons))
+    report.add("action_spec.compatible", False,
+               f"benchmark={key} 的 {len(narrowed)} 个候选都不兼容：\n    "
+               + "\n    ".join(tried)
+               + f"\n  MS 声明: {json.dumps(spec, ensure_ascii=False)}"
+               "\n  harness 侧只打 warning、评测照跑，分数是错的。逐字抄 benchmark 的 format 串；"
+               "模型语义真冲突（delta vs absolute、夹爪正负）时改串只是藏起冲突，要在 MS 里做转换并停下确认")
 
 
 async def check_inference(args: argparse.Namespace, report: Report, info: dict) -> None:
@@ -739,6 +1096,82 @@ async def check_inference(args: argparse.Namespace, report: Report, info: dict) 
                                                 if same else "不同（随机采样正常；否则怀疑状态未按 session 清空）"))
     else:
         report.note("跳过两 episode 首步动作比较：至少一个 episode 的首帧未返回 ACTION（见上面的 FAIL 项）")
+
+
+async def check_vector_step(args: argparse.Namespace, report: Report, info: dict) -> None:
+    """`VECTOR_STEP` / `VECTOR_RESULT`：robodojo / ocbench 的**硬门禁**，缺了连一个 episode 都不跑。
+
+    v0.9.0 的 `_run_vector` 开头就是
+    `if not conn.server_info["capabilities"].get("vector_step"): raise RuntimeError(...)`；
+    benchmark 侧 `hard_exit = True` 把这个异常吞掉后 `os._exit(1)`，所以线上失败形态是
+    「提交日志只有 exit code 1 与 0 episode、没有任何 traceback；MS 日志只有 connect→close」。
+
+    非 vector benchmark 不声明 `capabilities` 才是对的（见 `references/协议自检.md`）。
+
+    Args:
+        args: `parse_args()` 的结果，用到 `url`、`timeout`、`benchmark`、`obs_spec` 与 `image_format`。
+        report: 记账对象。
+        info: `check_hello()` 返回的 HELLO payload，取其 `capabilities` / `benchmark` / `action_spec`。
+    """
+    declared = bool((info.get("capabilities") or {}).get("vector_step"))
+    bench = str(args.benchmark or info.get("benchmark") or "").strip().lower()
+    if not declared:
+        required = bench in VECTOR_BENCHMARKS
+        report.add("vector_step.capability", not required,
+                   f"HELLO 未声明 capabilities.vector_step（benchmark={bench or '未知'}）。"
+                   + (f"{bench} 是 VectorStepBenchmark：v0.9.0 在 _run_vector 开头直接 raise RuntimeError，"
+                      "benchmark 侧 hard_exit 吞掉异常后 os._exit(1)——线上只看到 exit code 1 与 0 episode。"
+                      "形态 B 必须声明 vector_step 并实现 VECTOR_STEP/VECTOR_RESULT"
+                      if required else "非 vector benchmark 时不声明才是对的"))
+        return
+    report.add("vector_step.capability", True,
+               f"HELLO 声明 capabilities.vector_step（benchmark={bench or '未知'}）")
+
+    dim = spec_dim(info)
+    rng = np.random.default_rng(3)
+    async with MsClient(args.url, args.timeout, args.token) as cli:
+        await cli.hello()
+        start = {"task": {"name": "selfcheck-vector"}, "recording": {"eval_id": "selfcheck"}}
+        payload = {"ends": [], "starts": [[0, start]], "slots": [0],
+                   "observations": build_batch(args.obs_spec, args.image_format, rng, 1)}
+        try:
+            msg, elapsed = await vector_step(cli, payload)
+        except Exception as exc:
+            report.add("vector_step.roundtrip", False,
+                       f"{type(exc).__name__}: {exc}（服务端不认 vector_step，或迟未回包）")
+            return
+        if not report.add("vector_step.roundtrip", msg["type"] == MSG_VECTOR_RESULT,
+                          f"回包 type={msg['type']}（期望 {MSG_VECTOR_RESULT}），{elapsed:.2f}s"):
+            report.note(f"回包 payload: {str(msg.get('payload'))[:300]}")
+            return
+        report.add("vector_step.seq_echo", msg["seq"] == msg["_req_seq"],
+                   f"req={msg['_req_seq']} resp={msg['seq']}")
+        reply = msg.get("payload") or {}
+        if reply.get("errors"):
+            report.note(f"回包 errors={reply['errors']}（失败的 slot 不出现在 actions 行里）")
+        actions = reply.get("actions") or {}
+        rows = batch_rows(actions)
+        report.add("vector_step.rows", rows == 1,
+                   f"actions 行数={rows}（slots=1 时应为 1，且不含失败的 slot）")
+        arr = actions.get("actions") if isinstance(actions, dict) else actions
+        if arr is None:
+            report.add("vector_step.actions", False, f"回包里没有动作列：{str(reply)[:300]}")
+            return
+        arr = np.asarray(arr)
+        want = dim or int(args.obs_spec.get("states") or 0)
+        report.add("vector_step.actions_shape", arr.ndim == 2 and arr.shape[-1] == want,
+                   f"actions shape={arr.shape}（应为 (1, {want})：行=槽位，列=动作维）")
+        report.add("vector_step.actions_finite", bool(np.isfinite(arr).all()), f"dtype={arr.dtype}")
+        try:
+            msg, _ = await vector_step(cli, {"ends": [[0, {"success": False}]], "starts": [],
+                                            "slots": [], "observations": {}})
+        except Exception as exc:
+            report.add("vector_step.end", False, f"{type(exc).__name__}: {exc}")
+            return
+        left = batch_rows((msg.get("payload") or {}).get("actions") or {})
+        report.add("vector_step.end", msg["type"] == MSG_VECTOR_RESULT and left is None,
+                   "ends 后回空 actions" if left is None
+                   else f"ends 后仍有 {left} 行动作（槽位没被释放）")
 
 
 async def check_image_formats(args: argparse.Namespace, report: Report, info: dict) -> None:
@@ -999,7 +1432,9 @@ CHECKS = (
     ("config", check_config, False),
     ("auth", check_auth, False),
     ("hello", check_hello, False),
+    ("action_spec", check_action_spec, True),
     ("inference", check_inference, True),
+    ("vector_step", check_vector_step, True),
     ("image_formats", check_image_formats, True),
     ("error_resilience", check_error_resilience, True),
     ("no_episode_context", check_no_episode_context, True),
@@ -1043,6 +1478,16 @@ def parse_args(argv: list) -> argparse.Namespace:
     p.add_argument("--image-format", default="png", choices=("ndarray", "raw", "png", "jpeg"),
                    help="主用例的图像编码（harness 默认 png）")
     p.add_argument("--steps", type=int, default=3, help="每个 episode 的步数")
+    p.add_argument("--benchmark", default="",
+                   help="目标 benchmark 名（robodojo / robotwin / ...）。不给时取 HELLO 回包的 benchmark 字段。"
+                        "robodojo、ocbench 是 vector 协议，未声明 capabilities.vector_step 直接判 FAIL；"
+                        "同时决定 action_spec 用例拿哪一份期望 format/dims 来比对（内置 8 个常用 benchmark，"
+                        "表外名字只提示人工核、不判 FAIL）")
+    p.add_argument("--bench-param", action="append", default=[],
+                   metavar="KEY=VALUE",
+                   help="提交评测时该 benchmark 的构造参数，可重复或逗号分隔（robotwin: action_type=qpos|ee；"
+                        "calvin: absolute_action=true|false）。不传只打提示；传了就把 action_spec 的候选收窄到"
+                        "实际那一套——robotwin 默认 qpos 时 16D 的 ee_pose 会被静默截断成 14、不报错")
     p.add_argument("--first-frame-budget", type=float, default=30.0, help="首帧耗时预算（秒）")
     p.add_argument("--timeout", type=float, default=120.0, help="单次 recv 超时（秒）")
     p.add_argument("--http-timeout", type=float, default=10.0, help="/config 超时（秒）")

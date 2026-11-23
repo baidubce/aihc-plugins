@@ -146,6 +146,16 @@ if [ -f "$ENTRY" ]; then
   emit http_framework "$(grep -oE '^(from|import) +(flask|fastapi|gradio|websockets|uvicorn|tornado)' "$ENTRY" | awk '{print $2}' | sort -u | tr '\n' ' ')" "入口文件 import（gradio/demo 不可当 predict 片段）"
 fi
 
+# ── 4.5 训练口径 ⑥C：只在 *.py 里按赋值行找，不 import、不执行；训练口径必须回训练入口取证
+TR_FILES="$(grep -rlE --include='*.py' '(action_mode|is_history|max_history_images|history_slots)' "$WORKDIR" 2>/dev/null | head -8 | tr '\n' ' ')"
+emit train_config_files "$TR_FILES" "声明训练口径的文件（⑥C 取证处：dataclass / argparse 默认值）"
+emit train_hits "$(grep -rnE --include='*.py' '(action_mode|is_history|max_history_images|history_slots|HISTORY_SLOTS)[[:space:]]*[:=]' $(printf '%s' "$TR_FILES") 2>/dev/null | head -12 | sed -E 's/[[:space:]]+/ /g' | tr '\n' ';')" \
+  "file:line: 赋值行（同一字段多处赋值时以后出现的为准，需点开确认）"
+emit train_entry "$(grep -rlE --include='*.py' '(_sft_|sft_|def main\(|Exp\()' "$WORKDIR" 2>/dev/null | head -6 | tr '\n' ' ')" \
+  "训练入口候选（含 sft/main/Exp(）；⑥C 的默认值以它为准，**不是**推理 serve 脚本"
+emit train_action_horizon "$(grep -rnE --include='*.py' '(action_horizon|chunk_size|chunk_len)[[:space:]]*[:=][[:space:]]*[0-9]+' $(printf '%s' "$TR_FILES") 2>/dev/null | head -6 | sed -E 's/[[:space:]]+/ /g' | tr '\n' ';')" \
+  "训练侧 action chunk / 每段重推帧数（与推理 chunk 语义对齐用）"
+
 # ── 5. 运行时下载线索（只 grep -l / 只列名，不读内容）
 HITS="$(grep -rlE 'trust_remote_code *= *True|hf_hub_download|snapshot_download|torch\.hub\.load|gs://|from_pretrained\( *["'\''][A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+["'\'']' \
   --include='*.py' "$WORKDIR" 2>/dev/null | head -8 | tr '\n' ' ')"

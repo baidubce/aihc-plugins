@@ -1,6 +1,6 @@
 {
   "name": "aihc-eval",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "百舸模型评测工具集：覆盖具身评测的模型侧与评测集侧接入——把自定义推理服务改造成可用的 Model Server、把自定义 benchmark 镜像接入评测，均基于用户自定义镜像。",
   "author": {
     "name": "Baidu AI Cloud AIHC",

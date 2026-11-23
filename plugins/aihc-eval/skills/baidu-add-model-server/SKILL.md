@@ -36,10 +36,14 @@ description: "[runbook] 把一台能 SSH 的百舸开发机改造成具身评测
 | `references/评测集观测口径.md` | **观测速查表**：8 个常用 benchmark 的相机键名 / shape / state 字段名与维度 / 观测开关，可直接抄成 `obs.<benchmark>.json`。已按 `v0.9.0` 源码逐条复核；**仍是便利品不是权威**，落地前按阶段 3.5 的三个出处核一遍 |
 | `references/恢复点.md` | 中断恢复：`form.yaml` / `PROGRESS` 格式（唯一定义处）、重新进入的读序、恢复分支表 |
 | `references/改主意回退.md` | 中途改了前面的决定（G4 前 / G4 后两节）：改哪个 → 回退到哪步 → 作废哪些产物 → 重跑哪道门禁 |
+| `references/交互守则.md` | **怎么问、怎么报、怎么收口**：一次问齐、推荐项规则、无效回复计数与收敛、auto 边界、阻断/标注、过程反馈、出错三分类、恢复点与改主意入口、越界 |
+| `references/观测对齐.md` | **阶段 3.5 全文**：三处可信出处、state 字段名三分、禁止改模型侧参数、自检口径＝真实口径、多 benchmark 一份 yaml |
+| `references/交付控制台.md` | **步 8 细则**：高亮块之后给什么、命令条数与逐字一致、`--ckpt` 为何可不同、交付后两条坑 |
+| `references/走查样例.md` | **一键走查**：一台假想机从 G1 到步 8 的每停点输出骨架，给首次执行者对顺序与形状的直觉 |
 | `references/冒烟测试.md` | **L1 协议级冒烟**（开发机本机，交付门禁）：前置检查表、两终端口径、就绪信号、判读，以及 Troubleshooting 表 |
 | `scripts/probe_form_defaults.sh` | **可执行（只读）**：从用户启动脚本 / ckpt / 模型环境推断表单候选值，逐行 `字段<TAB>候选值<TAB>出处`；步 5 预填表单用 |
 | `scripts/ray_env_check.sh` | **可执行**：Ray 解释器约束断言（`env -i` 复刻运行时口径）。改造后与交付前各跑一次 |
-| `scripts/ms_selfcheck.py` | **可执行**：对已起好的 MS 跑协议级自动冒烟（`/config`、HELLO、两 episode 真观测计时、四种图像编码、畸形帧容错、session 隔离；给了 Token（`VLA_EVAL_SERVER_TOKEN`）时另验 Token 格式与 Bearer 鉴权正反用例），逐条 PASS/FAIL，失败退出码 1。只需 `websockets` + `msgpack` + `numpy`（png/jpeg 另需 `pillow`），**不依赖 harness** |
+| `scripts/ms_selfcheck.py` | **可执行**：对已起好的 MS 跑协议级自动冒烟（`/config`、HELLO、`action_spec` 与 benchmark 口径比对、两 episode 真观测计时、四种图像编码、畸形帧容错、session 隔离、`VECTOR_STEP`/`VECTOR_RESULT`；给了 Token（`VLA_EVAL_SERVER_TOKEN`）时另验 Token 格式与 Bearer 鉴权正反用例），逐条 PASS/FAIL，失败退出码 1。只需 `websockets` + `msgpack` + `numpy`（png/jpeg 另需 `pillow`），**不依赖 harness** |
 
 ## 规定的 harness 基线：tag `v0.9.0`
 
@@ -60,6 +64,11 @@ git show v0.9.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基
   `ema_alpha` 已删除；协议新增 `EPISODE_READY` / `VECTOR_STEP` / `PUBLISH` / `EPISODE_ERROR` 等由 HELLO
   `capabilities` 协商的消息（`protocol_version` 仍是 `1`）；robotwin 新增 `send_state` → `states` 16D、
   `max_steps` 400→1700；benchmark 收不下的 `observation_params` 从静默丢弃改为 warning；`rlbench` 删除、新增 `ocbench`。
+- **`capabilities` 不是纯可选项**：`robodojo` 与 `ocbench` 是 `VectorStepBenchmark`，MS 必须声明
+  `capabilities: {"vector_step": true}` 并实现 `VECTOR_STEP`/`VECTOR_RESULT`，否则 `_run_vector` 直接
+  `RuntimeError`，而 benchmark 的 `hard_exit` 会把它吞成 `exit code 1` + 0 episode、**没有任何 traceback**。
+  报文与语义见 `references/脚本模板.md`「形态 B 必做：VECTOR_STEP」，自检见
+  `scripts/ms_selfcheck.py` 的 `vector_step` 用例（未声明即 FAIL）。
 - **确认开发机上装的是哪一版**：
   ```bash
   "$MODEL_ENV/bin/python" -c "import vla_eval,vla_eval._version as v; print(v.version, vla_eval.__file__)"
@@ -78,13 +87,11 @@ git show v0.9.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基
    见 `references/Ray环境.md`。
 2. **服务必须满足协议**：同端口上 `GET /config` 返 200 + WebSocket msgpack。见 `references/协议自检.md`。
 
-⚠️ 第 1 条**平台代码里没有任何校验**（声明式的 Ray/Python 版本常量没有读取方）。
-不满足时的失败形态是：coordinator 按 hostname 子串 `-workermscustom-worker-` 找 MS 节点，等满 600s，
-最后报「MS 节点不足」——离根因极远。所以这一条必须在改造阶段就断言掉。
-
-平台固定 Ray head 口径为 `ray[default]==2.49.2` + Python `3.13.12`，必须 **patch 级一致**
-（差一个小版本就连不上 GCS）。本 skill 钉死这两个值，不问用户、不靠开发机现有 ray 反推；
-需要改时用 `RAY_VERSION=<x.y.z> PY_VERSION=<a.b.c>` 覆盖，并把本次版本记进 `SETUP_INFO`。
+⚠️ 第 1 条**平台代码里没有任何校验**（声明式的 Ray/Python 版本常量没有读取方）：不满足时 coordinator 按 hostname
+子串 `-workermscustom-worker-` 找 MS 节点，等满 600s 报「MS 节点不足」——离根因极远，所以必须在改造阶段断言掉。
+平台固定 Ray head 口径为 `ray[default]==2.49.2` + Python `3.13.12`，必须 **patch 级一致**（差一个小版本就连不上 GCS）；
+本 skill 钉死这两个值，不问用户、不靠开发机现有 ray 反推；要改时用 `RAY_VERSION=<x.y.z> PY_VERSION=<a.b.c>`
+覆盖，并把本次版本记进 `SETUP_INFO`。
 
 ## 三条底线
 
@@ -113,86 +120,28 @@ git show v0.9.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基
 | 7 | setup.sh → 摘要 → L1 → 清理 → 复跑 L1 | **G5** 清理清单（删除前） |
 | 8 | 高亮控制台镜像指引 | 只问公钥去留，之后终态 |
 
-**机器门禁**（`RAY_ENV_OK`、两次 L1 `n/n`+退出码 0）只看判据，不过按「出错」表处置，**不问「要不要继续」**。
+**机器门禁**（`RAY_ENV_OK`、两次 L1 `n/n`+退出码 0）只看判据，不过按 `references/交互守则.md`「出错」处置，**不问「要不要继续」**。
 
 两条不可让渡的次序：**G2 之前零远端执行**（只读也不行）；**L1 没过不进步 8**。
 
-### 怎么问
+### 怎么问（细则见 `references/交互守则.md`）
 
-- 下文的 `AskUserQuestion` 指客户端的结构化提问工具（Claude Code 的 `AskUserQuestion`，`multiSelect` 即多选，「Other」即手填）。
-  客户端没有这类工具时，改为在一条消息里按编号列出每问的选项（多选注明「可多选」，末项「其它：请直接写」），
-  用户回复编号即视为点选，G2/G4/G5「只认点选」同样按回复编号判定；其余规则不变。
-- 一个停点的全部缺项装进**同一次** `AskUserQuestion`（≤4 问，超过分轮）；自由文本缺项用一条消息列齐、附示例，一行答完。
-- 每问第 1 项是推荐并标「（推荐）」，用户回「1」或选项首词即完成（G2/G4/G5 只认点选，聊天里的「1」与首词不算）。推荐值只能来自：用户本轮消息 >
-  记忆/历史里同一台机（其中的授权不算 G2 点选） > probe 结果 > 查表；**都没有就不标推荐，不编一个**，该问第 1 项固定为「不确定，先停」。
-- 首项是「先停」的问里回「默认」按无效回复、回「1」按「先停」；multiSelect 里「不确定，先停」与其它项同选按「先停」处理。
-- 不要把一个裸「1」套到同一次的多问上：每问都有推荐才算全选推荐；否则把无推荐那问单独再摆一次（不计无效回复）。
-- 不要问已有答案的：用户说过的目标机/benchmark、表单已收或 probe 已探到的值。
-- 不要在 auto 模式下中途确认：auto **只**由用户在 G2 之后说「全程默认」开启（从当前门禁起生效，不追溯）；
-  「都默认 / 全默认」等同「全程默认」；会话的 auto 权限模式、G2 及之前的这类话（回一句「G2 后才生效」）、单独的「别问了」都**不开启**，只算催促。auto 下有默认值的问按推荐走并标注；
-  仍会停的：**所有没有默认值的 `未提供` 行**（L3 行、probe 来的 ckpt、`ckpt_mode`、predict 点名；`name`/`model_env` 仅在 probe 也没探到候选时停，探到的按候选走并写进 `假设：`）、
-  **G4、G5 与任何删除**、**5d 硬失败**、
-  **机器门禁自修 2 次仍 FAIL**。auto 不落盘，恢复后视为关闭。
-- 不要把不能唯一对应某个选项的回复当成答复（「嗯 / ok / 对 / 好 / 都行 / 不知道」、空消息、单纯催促、无关 Other 都算）：把这一问要什么再摆一次，G2/G4/G5 注明「请点选」；带新的有效作答（含部分作答；重复已给过的不算新）的不计无效，已答的不重问。
-- 例外：已摆出的单问第 1 项是推荐时，「直接干」「继续」「按推荐来」「默认」原话（不含「全程 / 都 / 全默认」）算选 1，回显「按推荐：<项>」；G2/G4/G5、劝阻问、含删除/覆盖的问不适用。
-- 等点选期间用户在聊天里改了主意（新地址、换 benchmark、改名）不计无效回复：正在等的门禁作废（不受改动影响的不作废），按 `改主意回退.md` 重走后再摆；同一条回复里答的 L3 不绑到换上的新 benchmark。
-- 不要无限重摆：同一问累计两次无效回复（按问计，一条回复至多计 1 次，不跨会话），收敛成「推荐项 / 取消」，无推荐的不删实质选项、只末项加「取消」；首项已是「先停」的不重摆，第二次无效即按「停在当前步」给终态；例外：G1 缺 ① 第 2 次无效即按「停在当前步」给终态（不写 `$W`），G5 为「按清单全删 / 不清理，停在步 7」，单项删除问两次无效即按「保留」继续，选目录用「不确定，先停」代替取消；收敛后只剩一项的不摆，按「停在当前步」给终态；
-  G3 的 L3 行、probe ckpt、predict 点名与无候选文本行以 5c「L3 要有终态」为准，不用这条；其余收敛后再无效，以「停在当前步」为终态。
+三条不可让渡的机制，其余（推荐项规则、无效回复计数与收敛、auto 边界、恢复、改主意、越界）全在
+`references/交互守则.md`：
 
-### 阻断 vs 标注
+1. **一次问齐**：一个停点的全部缺项装进同一次 `AskUserQuestion`（≤4 问，超过分轮）；自由文本缺项用一条消息列齐、附示例，一行答完。
+2. **首项推荐、不编推荐**：每问第 1 项是推荐并标「（推荐）」，推荐值只能来自本次会话用户消息 > 同机记忆 > probe 结果 > 查表；
+   **都没有就不标推荐**，该问第 1 项固定「不确定，先停」。
+3. **终态必收口**：每个终态最后一行是 `下一步建议：…`，G4 之后、步 8 之前的终态再加一句
+   `⚠️ 此可写层未完成清理与复检，勿保存为镜像`。
 
-**错了会静默错 → 阻断；错了会大声报错、或只影响呈现 → 标注（照默认做，结果里写明）。**
-拿不准算哪类时当阻断。
+门禁只在这几处停：G1 缺项、G2 授权、G3 无默认值行、G4 计划、G5 删除（含 `authorized_keys`）、5d 硬失败。
 
-| 阻断 | 标注 |
-|---|---|
-| 目标机、SSH 授权、benchmark、ckpt 与 `ckpt_mode`、L3 模型口径、改造计划、覆盖已有目录、任何删除 | SSH 用户默认 `root`/无私钥、`LAUNCH` 启动脚本猜测、本地工作目录名、报告格式、排查顺序、缺 `sample_action` |
+阻断 vs 标注：**错了会静默错 → 阻断；错了会大声报错、或只影响呈现 → 标注（照默认做，结果里写明）**，拿不准当阻断。
+用户**显式要求偏离训练口径**时按用户要求做，但把「偏离项 + 用户原话依据 + 可能后果」写进 `假设：` 与 `SETUP_INFO`。
 
-标注统一写在该步输出末尾，终态报告再汇总一次：
-
-```text
-假设：
-- <X>（依据 <出处>；不对就说，会影响 <Y>）
-```
-
-### 过程反馈
-
-- 每完成一个逻辑阶段只报一行结果：`✓ <完成了什么，带关键数字> → 接下来 <Y>`。
-- 默认输出 ≤500 字符。例外：G3 的 YAML、各步规定的表与计划块、FAIL 时的失败用例名 +
-  关键报错行、步 8 的命令块。数字不省。
-- 每个终态（完成 / 取消 / `dry_run` / 停在缺项 / FAIL）最后一行固定是 `下一步建议：…`（步 8 公钥问除外）。
-  G4 之后、步 8 之前的终态在它上一行加一句 `⚠️ 此可写层未完成清理与复检，勿保存为镜像`。
-
-### 出错
-
-| 类别 | 例子 | 处置 |
-|---|---|---|
-| 可自愈 | ssh 瞬断、heredoc 转义错、`LAUNCH` 猜错、偶发超时 | 自己修，**静默重试 1 次**；再失败按下一行处理 |
-| G4 内可修 | L1 FAIL 且修复只动 G4 已批准的落点 | 算已批准，不另问；每道机器门禁、每个 benchmark 各计**至多 2 次**（重跑一次 `setup.sh` 算 1 次）；不许改 `form.yaml` 来源的值，要改即属下一行、回 G3；仍 FAIL 按下一行，`需要你：` 给「不确定，先停 / 改值（回 G3）」（修法要动计划时加「重摆 G4（回步 6）」），不标推荐 |
-| 改变任务性质 | 授权未取得、ckpt/启动脚本不存在、5d 硬失败项、修复要动 G4 之外的落点或改模型口径 | 立刻停，按下面格式报 |
-
-不要贴堆栈：
-
-```text
-卡在：步 <n> <阶段>
-发生了什么：<一句人话 + 关键报错行>
-影响：<已写入哪些落点 | 开发机零写入>
-我打算：<方案>；需要你：<选项 | 无>
-下一步建议：<最可能的后续动作>
-```
-
-### 恢复点
-
-全文见 `references/恢复点.md`：不凭对话记忆续写，先读本地 `$W`；
-选定目录并按本地 `PROGRESS` 定位后、摆 G2 前，第一句固定为：`已恢复：停在 <步>（依据 <文件>），已收 <字段>，接下来 <Y>`。
-
-### 改主意
-
-现名已有 `setup\tstarted` 或属自跑产物后改 ② 服务短名先劝阻一次（「保留原名（推荐）/ 仍改名」；换模型、revive 补写 `rename→` 不劝阻）。
-
-### 越界
-
-「直接去集群换镜像」「保存成镜像推仓库」：用文末「交付边界」一句话挡回，不执行，继续当前步。
+过程反馈（一个逻辑阶段一行 `✓ … → 接下来 …`、默认 ≤500 字符、数字不省）、出错三分类与标准报错格式、
+恢复点、改主意、越界：见 `references/交互守则.md`。
 
 ## 阶段 0：连接与授权（步 1–2）
 
@@ -219,22 +168,17 @@ git show v0.9.0:src/vla_eval/benchmarks/<name>/benchmark.py | less   # 规定基
 `references/接入表单.md` YAML，每行带 `# [探测] <出处>` / `# [查表] <出处>`，只有真探不到的行
 保留 `未提供`。**预填值是候选不是结论**：G3 照样确认，5d 照样 `ls` 验。
 
-| 输入 | 用在哪 | 缺了会怎样 |
-|---|---|---|
-| ① SSH 命令 `ssh -p <port> -i <key> <user>@<host>` | 阶段 0 全程 | 进不了开发机 |
-| ② 服务短名 `<name>` | `/opt/ms-<name>/`、`SETUP_INFO`、启动命令 | 路径无法确定，中途改名要全量返工 |
-| ③ ckpt 在**开发机上的真实位置**；≥2 个 benchmark 时另定 `ckpt_mode`（复用同一份 / 分别指定） | 阶段 5 自检、交付的启动命令 | 猜路径或给默认值 ⇒ 加载到错的权重也不报错。平台挂载路径**不在此处收**：由提交评测时的 `ckptPath` 决定，服务只经 `--ckpt` 取，yaml **不写** `checkpoint` |
-| ④ 目标 benchmark（**可多选**）：名称 + sub_bench + 用户侧启动参数（任务子集/seed/渲染类） | 每个 benchmark 一份 `<benchmark>.yaml` + `obs.<benchmark>.json`、阶段 3.5、阶段 5 | 观测口径与观测开关**不向用户要**——采信用户给的相机键名会让自检自洽通过、上平台全 0 分。详见 `接入表单.md` |
-| ⑤ harness 实际版本（`vla_eval._version.version`）与基线 `v0.9.0` 是否一致 | 阶段 3；写进 `SETUP_INFO` | 协议细节按错版本写；观测键名在版本间会变 |
-| ⑥ 模型侧推理对接：conda env、最小 predict 片段、运行时资源 + 模型侧约定（图像预处理、state 打包、action 语义、chunk、per-episode 状态、要 BA（Benchmark Agent：评测时运行 benchmark 仿真环境、作为客户端连 MS 的一侧，跑在另一个 Pod）发什么） | 阶段 3 写 `predict`、阶段 3.5、阶段 5 人工核对 | 猜错不报错、产出看起来正常的错分数；「要 BA 发什么」漏了就收不到 state / 腕部相机 |
+**每一项都在后面被当成唯一真相源用**（①–⑥ 逐项「用在哪 / 缺了会怎样」见 `references/接入表单.md`「为什么这六项必须收齐」）。
+到阶段 3/5 才发现缺会返工，最典型的是④ 的观测口径与⑥C 的训练口径：前者采信用户给的相机键名会让自检自洽通过、
+上平台全 0 分，后者缺了就跑满 max_steps、0 分。
 
 ### 步 2：TCP 探测 + 授权（G2）
 
 本地 `nc -z` 探 TCP 端口（不登录、不碰私钥，可直接跑）→ 把**拼好的 SSH 命令（私钥只显示路径）
 + TCP 结果 + 用户名等标注**一起回显，在同一道 G2 里取授权（授权执行 / 只生成命令 / 重输 / 取消）→ 授权后才
-`echo connected` 验登录。TCP 不通就不摆 G2，按「出错」格式报，让用户查开发机状态/安全组。
+`echo connected` 验登录。TCP 不通就不摆 G2，按 `references/交互守则.md`「出错」格式报，让用户查开发机状态/安全组。
 `dry_run` 下一条都不执行：输出步 3 体检与 5b probe 的完整命令，
-请用户自己跑完把输出贴回，再据此预填 G3；明说不贴回或两次无效（按「怎么问」计）即以 `dry_run` 终态结束并写 `stop\t2\tdry_run`。G3 之后的 `dry_run` 输出改造计划与 `setup.sh` 全文即终态，不进 G4。
+请用户自己跑完把输出贴回，再据此预填 G3；明说不贴回或两次无效（按 `references/交互守则.md`「怎么问」计）即以 `dry_run` 终态结束并写 `stop\t2\tdry_run`。G3 之后的 `dry_run` 输出改造计划与 `setup.sh` 全文即终态，不进 G4。
 
 命令规范化、失败现象对照表、跳板机处理、全程执行纪律、阶段摘要格式——见 `references/连接与授权.md`。
 
@@ -315,10 +259,14 @@ benchmark 决定 ④ 的全部默认值，所以在 G1 就定下。G1 里要问�
    「采用预填值」不采信它们；点名后按该函数重推，与预填不同的行先写成 `重核 <重推值>`、单独一问「重推值（推荐）/ 改某几行」，不要静默采用；无差异不问。
 2. **probe 来的 ckpt**（仅当 ③ 不是用户主动给的）：回显该目录关键文件（权重文件名/大小/mtime），
    选项为「不确定，先停」+ 探测到的候选路径（都不标推荐）+ Other。「采用预填值」**不覆盖**这一行：`ls` 在 ≠ 是对的那份权重。
-3. **L3 缺项**（`state_layout` / `action_semantics` / `action_denormalize_by` / `runtime_downloads` 的显式结论，
+3. **L3 缺项**（`state_layout` / `action_layout` / `action_denormalize_by` / `runtime_downloads` 的显式结论，
    以及 predict 片段缺失或跑不通时的 `action_dim` / `chunk_len` / `camera_slot_map`）：有闭集的
-   （`action_semantics`、`action_denormalize_by`、`runtime_downloads` 的 `none`）做成选项、**不标推荐**、第 1 项「不确定，先停」；
-   开放的（`state_layout`）列在同一条消息里给格式示例，一行答完。
+   （`action_denormalize_by`、`runtime_downloads` 的 `none`）做成选项、**不标推荐**、第 1 项「不确定，先停」；
+   开放的（`state_layout` / `action_layout`）列在同一条消息里给格式示例，一行答完。
+   `action_format` 不进 L3：它逐字取 benchmark `get_action_spec()` 的 `format` 串，只有 benchmark 查不出时才向用户要语义串；
+   模型语义与 benchmark 期望冲突（delta vs absolute、夹爪正负）时**不换串**，按「口径冲突」停下问用户。
+   有构造参数的 benchmark（robotwin `action_type` / calvin `absolute_action`）另收一行 `action_params`：
+   这是**提交评测时实际用的值**，不与 MS 声明成对就会静默错（16D 截断成 14）。
 4. **仍 `未提供` 的 L1 行与 ≥2 个 benchmark 时的 `ckpt_mode`**：`ckpt_mode` 做成选项（不确定，先停 / reuse / per_benchmark，不标推荐）；
    `name` / `model_env` / `sub_bench` 有候选的做选项；predict 点名的候选**不标推荐**，第 1 项固定「不确定，先停」；以上无候选的并进第 3 问那条文本，一行答完。
    选项题超过 4 问时按需分轮（每轮 ≤4 问；多 benchmark 的 ⑥B 按 benchmark 分组），文本题始终只一条。
@@ -329,7 +277,7 @@ L3 行与 probe ckpt **无默认值、不许猜、不许用看起来合理的值
 **L3 要有终态**：用户累计两次答不出同一行（按行计，不跨会话，催促与「嗯 / ok / 不知道」都算）时，收敛成一问：
 导出待补清单并停（推荐）/ 补填这几行 / 取消；第二次收敛不给「补填」。
 「导出」输出待补清单——哪几行仍 `未提供`、为何不能默认、从哪能查到（`state_layout` 问模型作者或训练脚本里
-state 的打包顺序，`action_semantics` 看训练配置的 delta/absolute 与夹爪符号，`action_denormalize_by` 看 predict 里有无反归一化与 `unnorm_key`，
+state 的打包顺序，`action_layout` 看训练配置里动作向量的段序（段名可含 joint / ee / base_vel / torso 等，不限 joint|ee 二选一），`action_denormalize_by` 看 predict 里有无反归一化与 `unnorm_key`，
 `runtime_downloads` 看用户启动日志里的下载 URL 与 HF cache，predict 点名与 probe ckpt 问用户实际跑通的函数与权重，`action_dim`/`chunk_len`/`camera_slot_map` 看 predict 的返回形状与图像索引）——并写明「改造尚未开始、开发机
 零写入，补齐后回 G3」，清单同步写进 `form.yaml`。收敛后再无效按「导出」处理，给 `下一步建议：`，不再摆。
 
@@ -340,22 +288,11 @@ state 的打包顺序，`action_semantics` 看训练配置的 delta/absolute 与
 
 G3 通过后的**第二道只读检查**（不问人），与步 3 分工不同：步 3 答「这台机器是什么样」，
 5d 答「按计划改造会不会失败、会不会覆盖已有东西」。结论全部带进 G4 的计划，**不为单项另开一问**；
-标「硬失败」的按「出错」格式立刻停，`需要你：` 固定三项、不标推荐：不确定，先停 / 重探（已处理）/ 取消；
+标「硬失败」的按 `references/交互守则.md`「出错」格式立刻停，`需要你：` 固定三项、不标推荐：不确定，先停 / 重探（已处理）/ 取消；
 不给「合并进计划先跑」。重探至多 2 次仍硬失败就以「停在当前步」结束，不再给「重探」。
 
-| 检查项 | 不通过怎么办 |
-|---|---|
-| ②`<name>` 已定且 `/opt/ms-<name>` 不存在或内容可覆盖 | 已存在 → 计划里标「覆盖 <目录>（现有 <n> 个文件、`setup_sha256=<…>`）」，G4 按含覆盖的形态摆（见步 6），「调整计划」可换名 |
-| 四个落点 `/opt/{uv-bin,uv-python,ray-py,uv-cache}` 当前状态 | 已存在且满足约束 → 计划里标 `REUSE`，不重装 |
-| `/etc/uv/uv.toml` 是否已存在且没有一行恰为 `cache-dir = "/opt/uv-cache"`（与 `setup.sh` 同一 `grep -qx` 口径；ray 全 REUSE 时不查） | 存在且未钉或钉了别的值 → **硬失败**，用户人工处理后重探，不由 skill 合并；提示里给可直接粘贴的修法（把该文件的 `cache-dir` 行改成、或补一行 `cache-dir = "/opt/uv-cache"`，其余行不动） |
-| 软链目标目录在镜像 PATH 上，且 PATH 上**第一个** `ray` 满足约束或就是软链（排在后面的其它 `ray` 不算失败） | 第一个 `ray` 不满足约束 → **硬失败**（KubeRay 只用它）；路径按上面 `bash -c` 口径取（不用 SSH 会话的 PATH）；修法只给「把软链目标改到它之前的 PATH 目录」，没有这样的目录就不给重探，建议换基础镜像；不给「移出 PATH」，该 `ray` 在模型环境里时不给卸载命令 |
-| 根盘可用空间 ≥ 补装所需（无复用时约 2–3 GiB） | 不足 → 停下，先让用户清理或扩容 |
-| 外网可达性（仅在确实需要下载时才成为阻塞项） | 直连不通 → 提示显式传 `SETUP_PROXY=http://host:port`，不默认配代理 |
-| ③ckpt 在开发机上真实存在（`per_benchmark` 时每条路径都 `ls`）；选了 ≥2 个 benchmark 时 `ckpt_mode` 已定 | 缺失 → 按「改变任务性质」停，回 G3 改该行，不用默认值糊过去 |
-| ③ckpt 来源是 probe 预填时，G3 第 2 问已被用户正面认过 | 没认过 → 回 G3 第 2 问，不在这里补 |
-| ④benchmark 已选定，其观测口径能落成 `obs.<benchmark>.json` | 缺失 → 回 G3；多选时每个 benchmark 各一份 |
-| ⑤开发机上实际装的 harness 版本已读到（与基线 `v0.9.0` 的差异记进 `SETUP_INFO`） | 读不到 → 按 `v0.9.0` 核键名并在 `SETUP_INFO` 里注明未读到 |
-| ⑥模型侧推理对接信息齐全；模型环境里 `websockets`/`msgpack`/`pillow` 现状 | 依赖已齐 → 计划里标 `REUSE`，零下载 |
+检查项与「不通过怎么办」的完整表见 `references/开发机改造.md`「改造前置检查（步 5d）」。两条**硬失败**只有：
+`/etc/uv/uv.toml` 已存在但没把 `cache-dir` 钉成 `/opt/uv-cache`；PATH 上第一个 `ray` 不满足约束（软链盖不掉）。
 
 这一步**仍然一个字都不写盘**。检查项与探测口径的实现见 `references/Ray环境.md` 与 `references/开发机改造.md`。
 
@@ -395,17 +332,16 @@ G3 通过后的**第二道只读检查**（不问人），与步 3 分工不同�
 全文见 `references/Ray环境.md`（落点 `/opt/ray-py`、uv 本体与 `/etc/uv/uv.toml` 缓存钉定、`env -i` 复刻运行时
 口径的断言，断言已固化成 `scripts/ray_env_check.sh`）。两条不能在压缩中丢的：
 
-- **先探测可复用，再决定装**：「要不要联网」是探测的结论、不是前提。PATH 上第一个 `ray`、别处
-  （conda / 既有 venv / `/opt/ray-py`）的 ray 已是 `ray[default]==2.49.2` + Python `3.13.12`，或机器上已有精确
-  `3.13.12` 解释器——任一命中即零下载、不需要外网（脚本打 `RAY_REUSE:` / `PY_REUSE:`），直接收口于断言。
-- **PATH 上有没有 `ray`，走的是两条相反的路**：没有 → 把 `/opt/ray-py/bin/ray` 软链进镜像 ENV `PATH` 上
-  **已有**的根盘目录（通常 `/usr/local/bin`）即可；第一个 `ray` 存在但**不满足**约束 → **硬失败**，
-  不许用软链去盖（KubeRay 只认第一个）。
+- **先探测可复用，再决定装**：「要不要联网」是探测的结论、不是前提。PATH 上第一个 `ray`、conda / 既有 venv /
+  `/opt/ray-py` 里的 ray 已是 `ray[default]==2.49.2` + Python `3.13.12`，或机器上已有精确 `3.13.12`——任一命中即
+  零下载、不需要外网（脚本打 `RAY_REUSE:` / `PY_REUSE:`），直接收口于断言。
+- **PATH 上有没有 `ray`，走的是两条相反的路**：没有 → 软链进镜像 ENV `PATH` 上**已有**的根盘目录（通常
+  `/usr/local/bin`）；第一个 `ray` 存在但**不满足**约束 → **硬失败**（KubeRay 只认第一个，软链盖不掉）。
 
 ## 阶段 3：写 model server（步 7 执行）
 
 服务骨架、`predict`、specs、chunk、batch 的写法见 `references/脚本模板.md`，
-逐条自检见 `references/协议自检.md`。最容易踩的四条：
+逐条自检见 `references/协议自检.md`。最容易踩的七条：
 
 1. **端口不能写死**，进程里读平台注入的 `MS_PORT`——规则与 envs 黑名单见「步 8」。
 2. **探活是 `GET /config` 不是 `/health`**，与 WebSocket 同端口（平台 2s 探一次、900s 上限）；
@@ -414,105 +350,49 @@ G3 通过后的**第二道只读检查**（不问人），与步 3 分工不同�
 4. **per-episode 状态不能用进程级单变量**（多 shard 共享一个 MS）：形态 A 按 `row.id` 分桶、在
    `reset_episodes` 里清空；形态 B 按连接（`session_id`）分桶、`EPISODE_START` 清空；
    推理异常回 `ERROR` 而**不是**零动作、不关连接。
+5. **`get_action_spec()` 的 `format` 逐字等于 benchmark 的 `get_action_spec()`**：`DimSpec.format`
+   是自由字符串（不是 ee/joint 二选一，段名与段数都由 benchmark 定），harness 的 `check_specs()`
+   对不上**只打 warning、评测照跑** ⇒ 分数静默错。`ms_selfcheck.py` 的 `action_spec` 用例把同一份
+   比对做成硬门禁，交付前必须过；写法与候选表见 `脚本模板.md`「action / observation spec 怎么写」。
+   **维度也不由 ee/joint 决定**：robotwin 是 joint 14D / ee 16D，但 libero/simpler/calvin 末端 7D、
+   robocasa365 13D 五段、behavior_1k 关节 23D——一律抄 `get_action_spec()`，不套记忆里的数。
+6. **MS 声明的口径要与 BA 侧构造参数成对**：robotwin 声明 `ee_pose` 16D 时，提交评测的 sub_bench
+   必须传 `action_type=ee`，否则 benchmark 走默认 `qpos`、把 16D **静默截断成 14** 跑完全程
+   （`robotwin/benchmark.py:521-524`）。自检加 `--bench-param action_type=ee`
+   （calvin 是 `absolute_action=true|false`）才把这条钉住，不传只打提示。
+7. **⑥C 的训练口径要真的接线，并在启动日志里回显**：`action_mode`（及其在推理侧的消费方向）、
+   `is_history` + 历史槽位数 / 采样率 / 取自哪路相机，逐项打进日志一行（`use_absolute_action=...`、
+   `is_history=...`、`max_history_images=...`）。口径写在文档里、没落到 argv 和日志里，等于没做——
+   出分时唯一能回溯的就是这一行。历史帧采样的具体实现见 `references/脚本模板.md`「训练口径接线（⑥C）与历史帧」。
 
 raw 路径**不注入** `HF_HOME` / `HF_HUB_OFFLINE` / `HF_MODULES_CACHE`，要就自己在控制台 envs 里给
 （`HF_MODULES_CACHE` 必须可写）。
 
 ## 阶段 3.5：观测对齐（**最容易静默错分数的一步**）
 
-模型内部的相机命名（训练口径，常叫 `image_prompts` / `image_keys` / `cam_high`）与
-**benchmark 实发的观测键名**是**两套独立命名空间**，不要假设它们相同。必须在 MS 里
-显式做「观测键名 → 模型槽位」的映射。
+全文见 `references/观测对齐.md`（三处可信出处、state 字段名三分、禁止改模型侧参数、自检口径＝真实口径、
+多 benchmark 一份 yaml）。不能压缩的四条：
 
-### 真实键名只有三个可信来源
-
-出处与版本口径见本文「规定的 harness 基线：tag `v0.9.0`」——**按 tag `v0.9.0` 核**，
-开发机上装的若不是这一版，把实际版本与差异写进 `SETUP_INFO`。
-按可信度排序，**不要靠开发机上手工跑通时用的那套**（那常是作者 demo 的另一套预处理）：
-
-1. 同 benchmark 的参考 MS 实现 `src/vla_eval/model_servers/<name>.py`
-   （如 robodojo 的 `robodojo_pi05.py:69` `_CAMERA_MAP`：key 是**模型侧槽位**
-   `cam_high`/`cam_left_wrist`/`cam_right_wrist`，value 是可接受的**观测键名候选**，
-   `cam_high` 槽位接受 `cam_head` 或 `cam_high`——这张表的形状本身就是「两套命名空间」的证据）
-2. benchmark 实现本身 `src/vla_eval/benchmarks/<name>/`（看它往 `Observation` 里塞了什么键）
-3. `docs/reproductions/<name>.md`
-
-常用 benchmark 的观测口径已整理成速查表：`references/评测集观测口径.md`，可直接抄成 `obs.<benchmark>.json`。
-**表是便利品不是权威**：落地前仍按上面的出处核一遍。
-
-同时要对齐的不止键名：**图像是两层** `obs["images"][cam]`（8/8 benchmark 无例外，顶层只有
-`images` / state / `task_description`）、RGB/BGR、HWC/CHW、归一化、图像翻转、state 维度与打包顺序、
-`task_description` 的字段名。**线缆上的 state 字段名按 benchmark 三分**：`state`（robodojo；robocasa365
-是**嵌套 dict** 不是向量）、`states`（libero / libero_pro / calvin / behavior1k / simpler / robocasa 9D，
-robocasa 的 `send_state` 默认关）、
-`joint_state`（robotwin 恒发 14D；`send_state` 开时**另发** `states` 16D 末端位姿）
-——payload 就是 benchmark 的 `make_obs()` 返回的那个 dict 一字不改过线，没有统一字段名（对照表见
-`references/评测集观测口径.md` §4）。`obs.<benchmark>.json` 里的 `states` 是**维度声明**，字段名由 `state_key` 给出。
-MS 优先按该 benchmark yaml 里写死的 `state_key` 取；兼容写法 `obs.get("state", obs.get("states", obs.get("joint_state")))` 只作后备，**三个都缺就抛错、不要补零**
-——零状态常被模型当合法输入，把维度/量纲问题盖成一份错分数（上游 `model_servers/oft.py:169` 的
-`np.zeros(PROPRIO_DIM)` 兜底正是这种写法，别学）。
-**上游没有一个 MS 兜全三种键名**：`pi0`/`oft`/`starvla`/`lerobot`/`vlanext`/`molmobot` 只兜 `states`/`state`，
-`dexbotic/cogact` 只读 `joint_state`，`xvla` 读 `controller_states`→`states`→`state`（robotwin 上靠
-`send_state: True` + `action_type: ee` 拿 `states` 16D，不读 `joint_state`）——照抄任何一个都会在某个
-benchmark 上静默拿不到 state，robotwin 上两个 state 字段的维度与语义也不同（关节 14D vs 末端 16D）。
-state 发不发由 MS 自己在 `HELLO.observation_params` 里声明（`send_state` / `send_proprio`）：
-没声明就不会发，MS 却按必填读 → 每帧 ERROR（X-VLA on SimplerEnv 实测掉到 0%）。
-
-### 禁止改模型侧参数去迁就观测键名
-
-这是最省事、也最危险的做法。模型侧的相机名往往**逐字进模型输入**，改了它不会报错，
-只会出一份错分数。dm05 的 `--cameras` 就是这样一个**双职责参数**：
-
-- `build_slots()` 按它逐名去 obs 里取图
-- `build_cmd()` 又把它原样追加给上游 `--inference-config.image-prompts`
-- 上游 `transforms.py` 里 `label = f"{prompt} image: "` —— 逐字进模型文本 prompt
-- 而 RoboDojo 的训练口径固定是 `["Head", "Left wrist", "Right wrist"]`
-
-所以把它改成 `cam_head,cam_left_wrist,cam_right_wrist` 虽然能让报错消失，却把模型输入
-文本从 `Head image: ` 改成了 `cam_head image: `，与训练分布不符 ——
-**这正是「三个没有报错但分数是错的」第 2 条**。正确做法是解耦双职责：模型侧参数保持
-训练口径不动，另加一张别名表做查找，缺则**显式报错**。落地写法见 `references/脚本模板.md`。
-
-### 自检口径必须等于真实口径
-
-`obs.<benchmark>.json` 里写模型内部命名，会让 L1 自检**自洽通过**而上平台每个 episode 都 ERROR ——
-自检发什么、MS 就按什么取，两边用同一套假键名，错误被完全掩盖。
-`ms_selfcheck.py` 为此有一道机械防线：**不给 `--obs-spec` 时 `obs_spec` 用例直接 FAIL**，
-并校验每路 shape 是 `[H, W, C]`、`states` 是显式整数、`task_description` 非空；
-HELLO 阶段还会在「MS 声明的键名」与「将发送的键名」零交集时打一条 INFO 提示。
-`--skip obs_spec` 只用于快速试跑。**交付门禁（步 7 末 L1、阶段 6 清理后复跑）一律不许带任何 `--skip`**——
-唯一例外是缺 `pillow` 时 png/jpeg 两条自动降 INFO 跳过。用户要求跳过其余任何用例时当场拒绝，
-并说明该用例验的是什么真机缺陷（session 隔离、畸形帧容错、图像编码等），不许靠 `--skip` 把 n/n 稀释成伪通过。
-
-### 多选了 N 个 benchmark：一个 benchmark 一份 yaml
-
-**不要**写一份「能自适应所有 benchmark」的服务：相机键名、每路 shape、state 维度、线缆上的 state 字段名
-（`state` / `states` / `joint_state`）按 benchmark 三分，塞进一份配置只能靠运行时嗅探键名，而嗅探在键名
-缺失时会猜到另一个 benchmark 的槽位上，**产出一份看起来正常的错分数**。一 benchmark 一份 yaml，缺键显式报错。
-
-四条不变量，落地形状（`_base.yaml` + `extends` + `args` 分层、`cameras` 槽位表、yaml 不写 `checkpoint`、权重只经 `--ckpt`）
-见 `references/脚本模板.md`「多 benchmark 配置」：
-
-- `/opt/ms-<name>/` 下落 **N 份 `<benchmark>.yaml` + N 份 `obs.<benchmark>.json`**，命名与 schema 对齐上游
-  `configs/model_servers/<ms>/<benchmark>.yaml`，不自创；
-- `serve.sh` 以 `--config <path>` 选 benchmark：**有多份而没传就显式报错退出**，不要猜；交付与自检的命令一律显式带 `--config`（单 benchmark 也带，减到 1 个时残留 yaml 不会让命令变义）；
-- L1 冒烟对**每一份** yaml 各跑一遍（`--obs-spec` 换成对应那份），**全绿**才算过门禁；
-- 步 8 给出的控制台启动命令也是 **N 条**（差 `--config`，权重分别指定时还差 `--ckpt`）。
-
+- **两套命名空间**：模型侧相机名（常逐字进模型文本 prompt）与 benchmark 实发观测键名互相独立。真实键名只认
+  `v0.9.0` 的参考 MS `_CAMERA_MAP` > benchmark 实现 > `docs/reproductions/`，**不认开发机上手工跑通那套**
+  （那常是作者 demo 的另一套预处理）。
+- **禁止改模型侧参数去迁就键名**：改了不报错、只出一份错分数（prompt 从 `Head image: ` 变成 `cam_head image: `）。
+  正确做法是解耦双职责 + 别名表，缺则显式报错。
+- **不补零、不嗅探**：`state`/`states`/`joint_state` 三个都缺就抛错；一 benchmark 一份 yaml，缺键显式报错。
+- **自检口径必须等于真实口径**：`obs.<benchmark>.json` 写模型内部命名会让 L1 自洽通过而上平台每 episode ERROR；
+  `ms_selfcheck.py` 的 `--obs-spec` 缺省即 FAIL，**交付门禁不许带任何 `--skip`**（缺 `pillow` 时 png/jpeg 自动降 INFO 除外）。
 ## 阶段 4：把改动固化成一份脚本（步 7 执行）
 
 **开发机上对镜像的一切改动只来自一份幂等脚本 `setup.sh`**，经 heredoc 远端执行；
 不在交互 shell 里手敲 `pip install` / `cp`。改了就整份重跑，不在远端手工补。
 
-脚本与服务代码放在本地一个**不入库**的工作目录（即恢复目录 `$W`，见「恢复点」），上传到开发机 `/tmp/setup-<name>/`，
+脚本与服务代码放在本地一个**不入库**的工作目录（即恢复目录 `$W`，见 `references/恢复点.md`），上传到开发机 `/tmp/setup-<name>/`，
 **两端 sha256 比对**后执行。模板与上传、执行、轮询命令见 `references/开发机改造.md`。
 
-脚本必须自带：镜像 ENV 回取（`/proc/1/environ`）、前置断言、**网络只探测不默认配代理**
-（只在显式传入 `SETUP_PROXY` 时于本进程内生效，不写任何配置文件；理由见脚本注释）、
-运行时资源真建一次 + `test -f` 断言、
-`chmod -R a+rX`、结尾写一份 `/opt/ms-<name>/SETUP_INFO`（记 `setup_sha256` / 日期 /
-**本次采用的 ray + python 版本及其来源（默认钉死值，或 `RAY_VERSION`/`PY_VERSION` 覆盖值）** / **harness 实际版本与规定基线 `v0.9.0` 的差异**，
-复现与回溯时的唯一凭据）。
+脚本必须自带：镜像 ENV 回取（`/proc/1/environ`）、前置断言、**网络只探测不默认配代理**（只在显式传
+`SETUP_PROXY` 时于本进程内生效，不写任何配置文件）、运行时资源真建一次 + `test -f` 断言、`chmod -R a+rX`、
+结尾写 `/opt/ms-<name>/SETUP_INFO`（`setup_sha256` / 日期 / 本次 ray+python 版本及其来源 / harness 实际版本与
+`v0.9.0` 的差异）——复现与回溯时的唯一凭据。
 
 ## 步 7 报告：改造摘要 + 按需详细版
 
@@ -532,30 +412,8 @@ HELLO 阶段还会在「MS 声明的键名」与「将发送的键名」零交�
 **不问人，直接进阶段 5 跑 L1**；摘要末尾一句「要看软件包路径 + 代码改造说明的详细报告说一声」。
 用户要了才给两张表——**路径取自 `SETUP_INFO` 与实际 `ls`，不要凭记忆写**：
 
-**A. 软件包安装详细路径**
-
-| 落点 | 内容 | 本次动作 |
-|---|---|---|
-| `/opt/ray-py` | 独立 venv，仅 `ray[default]==2.49.2` | 新建 / REUSE |
-| `/opt/uv-python/cpython-3.13.12-*` | uv 托管的 CPython 3.13.12 | 新装 / REUSE |
-| `/opt/uv-bin/uv` | uv 本体 | 新装 / REUSE |
-| `/opt/uv-cache` + `/etc/uv/uv.toml` | uv 缓存及其 `cache-dir` 钉定（镜像不带 ENV，只能靠文件） | 新建 / 已存在 |
-| `/usr/local/bin/ray`、`/usr/local/bin/uv` | 软链，使裸 `ray` 落在镜像 ENV PATH 第一位 | 新建 |
-| `<模型环境>/lib/python*/site-packages` | `websockets` / `msgpack` / `pillow` | 新装 / REUSE |
-
-**B. 代码改造说明**
-
-| 文件 | 作用 | 关键约定 |
-|---|---|---|
-| `/opt/ms-<name>/server.py` | MS 本体：`GET /config` + WebSocket msgpack | 端口读 `MS_PORT`；权重与 warmup 在监听前完成；ACTION 1-D；per-episode 状态按 `row.id`（形态 A）/ `session_id`（形态 B）分桶 |
-| `/opt/ms-<name>/serve.sh` | 启动器，控制台命令就填它 | `MODEL_ENV` 绝对路径由 `setup.sh` 写入；端口优先 `MS_PORT`，纯数字首参可覆盖 |
-| `/opt/ms-<name>/_base.yaml`、`<benchmark>.yaml` × N | 按 benchmark 选口径的服务配置，`serve.sh --config` 选一份 | `extends: _base.yaml`；写死 `state_key` / `state_dim` / `cameras` / `obs_spec`；**不写 `checkpoint`** |
-| `/opt/ms-<name>/obs.<benchmark>.json` × N | 每个 benchmark 的真实观测 spec | 相机键名 + shape + state 维度，自检据此发帧 |
-| `/opt/ms-<name>/ray_env_check.sh` | Ray 约束断言（`env -i` 复刻运行时口径） | 打 `RAY_ENV_OK` 才算过 |
-| `/opt/ms-<name>/ms_selfcheck.py` | L1 协议级冒烟 | n/n 通过 + 退出码 0 |
-| `/opt/ms-<name>/{setup.sh,SETUP_INFO}` | 自拷副本 + 出处凭据 | 同一份脚本可在新开发机原样重跑重建产物 |
-
-两张表都只给**路径与用途**，不打印文件内容，不回显任何 token / AK/SK。
+详细版两张表（软件包安装路径 / 代码改造说明）见 `references/开发机改造.md`「步 7 详细报告」——
+**路径取自 `SETUP_INFO` 与实际 `ls`，不凭记忆写；只给路径与用途，不打印文件内容，不回显任何 token / AK/SK。**
 
 ## 阶段 5：离线自检 ＝ L1 协议级冒烟（步 7 门禁）
 
@@ -570,7 +428,7 @@ bash /opt/ms-<name>/ray_env_check.sh             # 要 RAY_ENV_OK + 退出码 0
 #    每个 benchmark 各起一次：serve.sh --config /opt/ms-<name>/<benchmark>.yaml --ckpt <ckpt>
 # 3. 协议级自动冒烟（另一个终端）。解释器必须用模型环境那个，不是裸 python3
 "$MODEL_ENV/bin/python" /opt/ms-<name>/ms_selfcheck.py --url ws://127.0.0.1:18000 \
-    --obs-spec /opt/ms-<name>/obs.<benchmark>.json   # 与 --config 同一个 benchmark；要「n/n 通过」+ 退出码 0
+    --obs-spec /opt/ms-<name>/obs.<benchmark>.json --benchmark <benchmark>   # 与 --config 同一个 benchmark；要「n/n 通过」+ 退出码 0
 # 4. 仅当 MS 还要以「自建推理服务」接入、开了 Bearer 鉴权时：MS 与自检读同一个环境变量再跑一遍
 #    export VLA_EVAL_SERVER_TOKEN=<token>，重起 MS 后在第 3 步命令末尾加 --require-auth
 ```
@@ -578,24 +436,22 @@ bash /opt/ms-<name>/ray_env_check.sh             # 要 RAY_ENV_OK + 退出码 0
 ⚠️ 自检入口一律是 **`/opt/ms-<name>/`**（`setup.sh` 的落点）。`/tmp/setup-<name>/` 只是上传中转，
 容器重启即消失，拿它当入口会在重启后、以及用户将来用该镜像新建开发机时直接找不到文件。
 
-`ms_selfcheck.py` 自动覆盖：**`obs_spec` 口径门禁**（`--obs-spec` 缺省即 FAIL）、
-`/config` 200 与 `?max_batch_size=1`、HELLO 的 `protocol_version`/`seq` 回显、
-两个 episode × N 步真观测计时（首帧预算默认 30s）、ACTION 是 1-D 有限值且与 `action_spec` 维度一致、
-四种图像编码（`ndarray`/`raw`/`png`/`jpeg`）、畸形帧回 ERROR 且不断连可恢复、两条并发连接的 session 隔离；
-给了 Token 时另验 Token 格式（控制面规则）与鉴权（带 Token 的 `/health`/`/config`/握手通过，
-不带、错 Token 握手必须 401/403）。输出里 Token 一律打成 `Bearer ***`。
-`--obs-spec` 给本 benchmark 的**真实**相机键名与形状
-（口径与来源见「阶段 3.5：观测对齐」），`--list` 看用例名。
+`ms_selfcheck.py` 自动覆盖（完整清单见 `references/协议自检.md`「哪些条目已被脚本自动判定」，`--list` 看用例名）：
+**`obs_spec` 口径门禁**（`--obs-spec` 缺省即 FAIL）、`/config` 200、HELLO 回显、**`action_spec` 动作口径门禁**
+（与 benchmark `get_action_spec()` 的 `format`/`dims` 逐项比对，`--bench-param action_type=ee` / `absolute_action=true`
+收窄候选）、两 episode × N 步真观测计时、ACTION 1-D 且维度一致、四种图像编码、畸形帧容错、session 隔离、
+`VECTOR_STEP`/`VECTOR_RESULT`；给了 Token 另验格式与鉴权正反用例（输出一律打 `Bearer ***`）。
+`--obs-spec` 必须给本 benchmark 的**真实**相机键名与形状（见「阶段 3.5：观测对齐」）。
 
 仍需人工确认的：
 
 - [ ] 日志里打印的 ckpt 路径就是传入的那个（脚本看不到服务端日志）
-- [ ] 观测字段与上游 reproduction 的预处理逐项对齐（见下文「三个没有报错但分数是错的」）
+- [ ] 观测字段与上游 reproduction 的预处理逐项对齐（见下文「四个没有报错但分数是错的」）
 - [ ] `references/协议自检.md` 里标注「人工」的条目
 
 `/config` 返 200 只是起点——它只证明端口通了，不证明能推理，必须发真观测计时。
 
-L1 结果**按「过程反馈」给一张表**：两道门禁各一行只给判据（`RAY_ENV_OK` / `n/n`＋退出码；多 benchmark 时 `n/n` **每个 benchmark 一行**）、
+L1 结果**按 `references/交互守则.md`「过程反馈」给一张表**：两道门禁各一行只给判据（`RAY_ENV_OK` / `n/n`＋退出码；多 benchmark 时 `n/n` **每个 benchmark 一行**）、
 人工三项各一行只给结论与那一行日志实据，逐条 `[PASS]` 与完整日志都是详情、用户问了再给。
 **任一 FAIL** 必须贴失败用例名、关键报错行、以及停在哪一步、不进第 8 步。
 
@@ -614,15 +470,15 @@ L1 结果**按「过程反馈」给一张表**：两道门禁各一行只给判�
   **例外**：回退产生的废产物由差量 G4 批准、G5 只复核（见 `references/改主意回退.md`）。
 - **清理后按阶段 5 同一条命令复跑整套 L1**（不只是 `curl /config`）——误删只有发真观测才看得出来。
   仍要 `RAY_ENV_OK` + 「通过数 == 用例总数」+ 退出码 0（不带 `--skip`），这就是本 skill 的交付门禁。
-  复跑会再生成 `/tmp/ms-selfcheck.*`，通过后再定点删一次（算 G5 已批准）。复跑 FAIL 后按「出错」表「G4 内可修」重跑了 `setup.sh` 的，
+  复跑会再生成 `/tmp/ms-selfcheck.*`，通过后再定点删一次（算 G5 已批准）。复跑 FAIL 后按 `references/交互守则.md`「出错」表「G4 内可修」重跑了 `setup.sh` 的，
   新残留（`/tmp/setup-*`、history）重列清单再过一次 G5，再复跑 L1。
   私钥/凭据删除与这次复跑都是**硬步骤**：用户催「别删了直接交付」「清理我自己来」「L1 刚才过了不用再跑」
   都不构成跳过：回一句为什么必须做，不顺着略过。
 
 ## 步 8：提示用户去控制台制作开发机镜像
 
-**只有阶段 6 清理（私钥/凭据已删）+ 清理后复跑 L1 全绿（`RAY_ENV_OK` + `n/n 通过` + 退出码 0）才进这一步。** 清理没做、清理后没复跑、或 L1 没过，都停在步 7 报告问题，
-不要提示用户做镜像。
+**只有阶段 6 清理（私钥/凭据已删）+ 清理后复跑 L1 全绿（`RAY_ENV_OK` + `n/n 通过` + 退出码 0）才进这一步。**
+清理没做、清理后没复跑、或 L1 没过，都停在步 7 报告问题，不要提示用户做镜像。
 
 这段输出必须**高亮**（标题 + 加粗 + 独立代码块），因为它是用户唯一需要亲自动手的环节：
 
@@ -642,47 +498,22 @@ L1 结果**按「过程反馈」给一张表**：两道门禁各一行只给判�
 envs 黑名单（填了直接 400）：EVAL_*、CUDA_VISIBLE_DEVICES、RAY_*、PYTHONPATH、MS_PORT、代理变量。
 ```
 
-高亮块之后依次给：本次全程的 `假设：` 汇总（没有就不写）、`下一步建议：做完镜像后先用 1 个 benchmark、
-少量 episode 提一次评测核分数量级，再放全量`（三者一并写进 `STEP8`），最后摆 `authorized_keys` 那一问。`STEP8` 与 `step8 written`/`delivered` 的时机见 `references/恢复点.md`。
+三条硬要求：**除平台挂载后的 `--ckpt` 路径外不许留占位符**、**命令条数按 benchmark 数给**（单 1 条；N 条各带
+`--config /opt/ms-<name>/<benchmark>.yaml`）、**每条除 `--ckpt` 外逐字等于步 7 自检跑过的那条**（多改一个字
+就等于交付了一条没验证过的命令）。高亮块之后依次给：`假设：` 汇总 → `下一步建议：…` → `authorized_keys` 那一问
+（保留（推荐）/ 删除）。写法细节、`--ckpt` 为何可不同、交付后要提示的两条坑（tag 不复用、镜像需节点可达）见
+`references/交付控制台.md`。
+## 四个「没有报错但分数是错的」
 
-上面的 `dm05` / `robodojo.yaml` / `/opt/dm05-cache/hf` 只是形状示例。**实际输出必须是可以直接粘贴的
-具体命令**，不留任何占位符：`<name>` 换成②的实际值，yaml 与 envs 的路径取自 `SETUP_INFO` 与实际 `ls`。
-**唯一允许留占位符的是平台挂载后的 ckpt 路径**（理由见下）。
-
-**命令条数按 benchmark 数给，一条都不许少**：
-
-- 单 benchmark：给 **1 条**，同样显式带 `--config`（与 L1 跑过的那条逐字一致）。
-- 多 benchmark（N 个）：给 **N 条**，一条一行，每条**显式带 `--config /opt/ms-<name>/<benchmark>.yaml`**
-  ——目录里有多份 yaml 而命令没传 `--config`，`serve.sh` 会显式报错退出（见「多选了 N 个 benchmark」）。
-  权重分别指定时 N 条的 `--ckpt` 各不相同，逐条标明哪条对应哪个 benchmark。
-- envs 若按 benchmark 不同（如各自的 `HF_HOME`），**随命令逐条给**，不要只给一份让用户自己套。
-
-每条命令**除 `--ckpt` 的值以外，逐字等于**步 7 自检时对应那份 yaml 实际跑过的那条（自检已用
-`env -i` + `MS_PORT` 复刻运行时口径），不要在交付时临时改写——多改一个字就等于交付了一条没验证过的命令。
-
-`--ckpt` 是唯一允许不同的字段：自检用开发机上的真实路径，控制台用平台挂载后的路径，而后者由提交评测时的
-`ckptPath` 决定、改造阶段还不存在（见阶段 0 输入 ③），本 skill 结构上无法预知，也不要用软链去硬凑成同一字面。
-它可以不同的前提是**ckpt 参数无默认值**：填错即启动失败，不会静默跑出一份错分数。
-**也因此 `--ckpt` 不能以「有默认值、不填即用 SETUP_INFO 里的路径」交付**——那个默认值指向开发机路径，
-平台上根本不存在，真不填就是启动失败；而若脚本里真给了默认值，就退化成「静默加载错权重」。
-
-## 交付之后（不在本 skill 范围，见「交付边界」）
-
-交接时提示两条已知坑即可：
-
-1. **同一 tag 永不复用**——节点有镜像缓存，同名覆盖不生效（换了镜像而行为没变，通常就是这个）。
-2. **镜像地址要节点网络可达、凭据允许拉取**——否则以「镜像拉取失败」出现，离根因很远。
-
-提交后的症状速查表在 `references/冒烟测试.md`「Troubleshooting」；与上游基线比对要样本量够才定级。
-
-## 三个「没有报错但分数是错的」
-
-1. **加载的是那个 ckpt 吗？** 日志里打印一次实际路径，E2E 时核对。ckpt 参数**不要给默认值**——
-   宁可启动失败，也不要静默加载默认权重跑完全程。
-2. **观测对齐了吗？** 相机键名、RGB/BGR、HWC/CHW、归一化、state 维度、图像翻转——见「阶段 3.5：观测对齐」。
-   模型内部命名与 benchmark 实发键名是两套命名空间，**不要改模型侧参数去迁就观测键名**；
-   开发机上「手工跑通」用的常是作者 demo 的另一套预处理，不等于和 benchmark 发来的观测对齐。
+1. **加载的是那个 ckpt 吗？** 日志里打印一次实际路径，E2E 时核对。ckpt 参数**不要给默认值**——宁可启动失败。
+2. **观测对齐了吗？** 相机键名、RGB/BGR、HWC/CHW、归一化、state 维度、图像翻转；模型内部命名与 benchmark 实发键名
+   是两套命名空间，**不要改模型侧参数去迁就键名**（见「阶段 3.5」与 `观测对齐.md`）。
 3. **动作语义对吗？** 夹爪符号、delta/absolute、`unnorm_key`、chunk 截断位置、ensemble 策略。
+4. **推理框架的默认值 = 训练时的值吗？**（前三条的「上游版」）推理入口的 dataclass / argparse 默认值常是作者调试值，
+   与产出该 ckpt 的训练脚本不一致、**语义还可能取反**；必须回训练入口取证（⑥C），不许照推理 serve 脚本抄。
+   实测两例（dm05 / RoboDojo，2026-11-17）：`action_mode` 训练 `ABSOLUTE` 而推理默认 `RELATIVE`，框架里
+   `use_absolute_action = (action_mode == RELATIVE)` ⇒ 管线再叠一次 `abs = state + action`，形状对、无报错、
+   `mean_success=0`；`is_history` 训练 `True` + 20 个 1 FPS 历史槽位（取自 Head），推理默认不传 ⇒ prompt 少 20 路图。
 
 ## 交付边界
 

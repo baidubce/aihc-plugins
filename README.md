@@ -17,8 +17,8 @@
 
 | 插件 | 版本 | 功能 | 支持的客户端（按组件） |
 |---|---|---|---|
-| [aihc-eval](plugins/aihc-eval) | 0.3.0 | 百舸模型评测工具集：覆盖具身评测的模型侧与评测集侧接入——把自定义推理服务改造成可用的 Model Server、把自定义 benchmark 镜像接入评测，均基于用户自定义镜像。 | skills：Claude Code、Codex、Copilot CLI、Cursor |
-| [aihc-eval-openapi](plugins/aihc-eval-openapi) | 0.1.2 | 百舸具身评测 OpenAPI 实践：以苏州地域为例，给出评测任务的调用顺序、签名与幂等、CreateEmbodiedEval 请求体（预置模型、自有权重、自有镜像、全托管资源池）、结果与回放视频读取和常见报错排查。 | skills：Claude Code、Codex、Copilot CLI、Cursor |
+| [aihc-eval](plugins/aihc-eval) | 0.4.0 | 百舸模型评测工具集：覆盖具身评测的模型侧与评测集侧接入——把自定义推理服务改造成可用的 Model Server、把自定义 benchmark 镜像接入评测，均基于用户自定义镜像。 | skills：Claude Code、Codex、Copilot CLI、Cursor |
+| [aihc-eval-openapi](plugins/aihc-eval-openapi) | 0.1.3 | 百舸具身评测 OpenAPI 实践：以苏州地域为例，给出评测任务的调用顺序、签名与幂等、CreateEmbodiedEval 请求体（预置模型、自有权重、自有镜像、全托管资源池）、结果与回放视频读取和常见报错排查。 | skills：Claude Code、Codex、Copilot CLI、Cursor |
 
 ## ⚠️ 使用须知
 
